@@ -276,7 +276,7 @@ async function createQuoteImage(content, authorName, avatarUrl) {
   const LINE_HEIGHT = 44;
   const AVATAR_SIZE = 120;
 
-  const lines = wrapText(sanitize(content, 300), 26);
+  const lines = wrapText(sanitize(content, 300), 40);
 
   lines[0] = '"' + lines[0];
   lines[lines.length - 1] = lines[lines.length - 1] + '"';

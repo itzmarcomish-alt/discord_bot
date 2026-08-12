@@ -1212,22 +1212,37 @@ async function handleMsgTimeout(message, rest) {
 
 async function purgeChannelMessages(channel, count) {
   let deleted = 0;
-  let remaining = count;
+  let before;
 
-  while (remaining > 0) {
-    const batch = Math.min(remaining, 100);
+  while (deleted < count) {
+    const batch = await channel.messages
+      .fetch({ limit: 100, before })
+      .catch(() => null);
 
-    const result = await channel
-      .bulkDelete(batch, { filterOld: true })
-      .catch(error => {
-        console.error(error);
-        return null;
-      });
+    if (!batch || batch.size === 0) break;
 
-    if (!result || result.size === 0) break;
+    const msgs = [...batch.values()].slice(0, count - deleted);
 
-    deleted += result.size;
-    remaining -= result.size;
+    const now = Date.now();
+    const BULK_MAX_AGE = 14 * 24 * 60 * 60 * 1000;
+    const bulkable = msgs.filter(msg => now - msg.createdTimestamp < BULK_MAX_AGE);
+    const oldOnes = msgs.filter(msg => now - msg.createdTimestamp >= BULK_MAX_AGE);
+
+    if (bulkable.length >= 2) {
+      const result = await channel.bulkDelete(bulkable, true).catch(() => null);
+      if (result) deleted += result.size;
+    } else if (bulkable.length === 1) {
+      await bulkable[0].delete().catch(() => {});
+      deleted += 1;
+    }
+
+    for (const msg of oldOnes) {
+      await msg.delete().catch(() => {});
+      deleted += 1;
+    }
+
+    if (batch.size < 100) break;
+    before = batch.last().id;
   }
 
   return deleted;
@@ -1291,12 +1306,11 @@ async function handleSlashEraseChat(interaction) {
 
   const count = interaction.options.getInteger('cantidad', true);
 
+  await interaction.deferReply({ ephemeral: true });
+
   const deleted = await purgeChannelMessages(channel, count);
 
-  await interaction.reply({
-    content: `✅ ${deleted} mensaje(s) eliminado(s).`,
-    ephemeral: true
-  });
+  await interaction.editReply(`✅ ${deleted} mensaje(s) eliminado(s).`);
 
   await logModAction(
     guild,
