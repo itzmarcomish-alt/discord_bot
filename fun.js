@@ -225,28 +225,35 @@ async function createSignatureImage(name, avatarUrl) {
 }
 
 async function createPolaroidImage(photo, caption) {
-  const W = 520;
-  const H = 640;
-  const PH = 450;
-  const safeCaption = sanitize(caption, 60);
+  const PHOTO_SIZE = 440;
+  const MARGIN = 35;
+  const CAPTION_LINE_HEIGHT = 36;
+  const CAPTION_MAX_CHARS = 32;
+  const safeCaption = sanitize(caption, 90);
+  const captionLines = safeCaption ? wrapText(safeCaption, CAPTION_MAX_CHARS).slice(0, 3) : [];
+  const captionHeight = captionLines.length * CAPTION_LINE_HEIGHT;
+  const W = PHOTO_SIZE + MARGIN * 2;
+  const H = MARGIN + PHOTO_SIZE + 30 + captionHeight + 40;
+  const captionBaseline = MARGIN + PHOTO_SIZE + 30 + CAPTION_LINE_HEIGHT;
 
-  const base64 = await squarePhoto(photo, PH);
+  const base64 = await squarePhoto(photo, PHOTO_SIZE);
 
   let photoElement;
 
   if (base64) {
-    photoElement = '<image x="35" y="45" width="' + PH + '" height="' + PH + '" xlink:href="data:image/png;base64,' + base64 + '"/>';
+    photoElement = '<image x="' + MARGIN + '" y="' + MARGIN + '" width="' + PHOTO_SIZE + '" height="' + PHOTO_SIZE + '" xlink:href="data:image/png;base64,' + base64 + '"/>';
   } else {
     photoElement =
-      '<rect x="35" y="45" width="' + PH + '" height="' + PH + '" fill="#d5dbdb"/>' +
-      '<text x="' + (W / 2) + '" y="' + (45 + PH / 2) + '" text-anchor="middle" font-family="Arial, sans-serif" font-size="26" fill="#7f8c8d">sin foto</text>';
+      '<rect x="' + MARGIN + '" y="' + MARGIN + '" width="' + PHOTO_SIZE + '" height="' + PHOTO_SIZE + '" fill="#d5dbdb"/>' +
+      '<text x="' + (W / 2) + '" y="' + (MARGIN + PHOTO_SIZE / 2) + '" text-anchor="middle" font-family="Arial, sans-serif" font-size="26" fill="#7f8c8d">sin foto</text>';
   }
 
   const svg = svgDoc(W, H,
-    '<rect width="' + W + '" height="' + H + '" fill="#ffffff"/>' +
-    '<rect x="10" y="10" width="' + (W - 20) + '" height="' + (H - 20) + '" fill="none" stroke="#ecf0f1" stroke-width="2"/>' +
+    '<rect x="8" y="8" width="' + W + '" height="' + H + '" fill="#00000022"/>' +
+    '<rect x="0" y="0" width="' + W + '" height="' + H + '" fill="#ffffff"/>' +
+    '<rect x="0" y="0" width="' + W + '" height="' + H + '" fill="none" stroke="#e0e0e0" stroke-width="1"/>' +
     photoElement +
-    (safeCaption ? textBlock([safeCaption], W / 2, H - 60, 28, 34, '#444444', 'Arial, sans-serif', 'normal', 'italic', 'middle') : '')
+    (captionLines.length ? textBlock(captionLines, W / 2, captionBaseline, 28, CAPTION_LINE_HEIGHT, '#444444', 'Arial, sans-serif', 'normal', 'italic', 'middle') : '')
   );
 
   return sharp(Buffer.from(svg)).png().toBuffer();
@@ -255,21 +262,25 @@ async function createPolaroidImage(photo, caption) {
 async function createWantedImage(avatarUrl, name, reward) {
   const W = 500;
   const H = 660;
-  const AV = 200;
+  const AV = 190;
   const safeName = sanitize(name, 40);
 
   const gray = await squareAvatarGray(avatarUrl, AV, safeName);
-  const lines = wrapText(safeName, 22).slice(0, 2);
+  const lines = wrapText(safeName, 20).slice(0, 2);
 
   const svg = svgDoc(W, H,
-    '<rect width="' + W + '" height="' + H + '" fill="#f0dfa8"/>' +
+    '<rect width="' + W + '" height="' + H + '" fill="#efe0b8"/>' +
     '<rect x="12" y="12" width="' + (W - 24) + '" height="' + (H - 24) + '" fill="none" stroke="#1a1a1a" stroke-width="6"/>' +
     '<rect x="26" y="26" width="' + (W - 52) + '" height="' + (H - 52) + '" fill="none" stroke="#1a1a1a" stroke-width="2"/>' +
-    '<text x="' + (W / 2) + '" y="95" text-anchor="middle" font-family="Arial, sans-serif" font-size="54" font-weight="bold" fill="#c0392b">¡SE BUSCA!</text>' +
-    '<image x="' + (W / 2 - AV / 2) + '" y="125" width="' + AV + '" height="' + AV + '" xlink:href="data:image/png;base64,' + gray + '"/>' +
-    '<text x="' + (W / 2) + '" y="375" text-anchor="middle" font-family="Arial, sans-serif" font-size="34" font-weight="bold" fill="#222222">RECOMPENSA: $' + reward + '</text>' +
-    textBlock(lines, W / 2, 440, 30, 40, '#222222', 'Arial, sans-serif', 'bold', 'normal', 'middle') +
-    '<text x="' + (W / 2) + '" y="575" text-anchor="middle" font-family="Arial, sans-serif" font-size="20" fill="#7f5f1d" font-style="italic">* por crímenes de diversión *</text>'
+    '<text x="' + (W / 2) + '" y="100" text-anchor="middle" font-family="\'Liberation Serif\', \'Times New Roman\', Georgia, serif" font-size="52" font-weight="bold" letter-spacing="4" fill="#7f1d1d">¡SE BUSCA!</text>' +
+    '<line x1="' + (W / 2 - 170) + '" y1="122" x2="' + (W / 2 + 170) + '" y2="122" stroke="#1a1a1a" stroke-width="3"/>' +
+    '<image x="' + (W / 2 - AV / 2) + '" y="145" width="' + AV + '" height="' + AV + '" xlink:href="data:image/png;base64,' + gray + '"/>' +
+    '<rect x="' + (W / 2 - AV / 2 - 6) + '" y="139" width="' + (AV + 12) + '" height="' + (AV + 12) + '" fill="none" stroke="#1a1a1a" stroke-width="3"/>' +
+    '<text x="' + (W / 2) + '" y="375" text-anchor="middle" font-family="\'Liberation Serif\', \'Times New Roman\', Georgia, serif" font-size="22" font-weight="bold" letter-spacing="3" fill="#7f1d1d">MUERTO O VIVO</text>' +
+    '<rect x="130" y="405" width="240" height="48" fill="#1a1a1a"/>' +
+    '<text x="' + (W / 2) + '" y="437" text-anchor="middle" font-family="\'Liberation Mono\', \'Courier New\', monospace" font-size="23" font-weight="bold" fill="#f5f0e1">RECOMPENSA: $' + reward + '</text>' +
+    textBlock(lines, W / 2, 495, 34, 42, '#1a1a1a', "'Liberation Serif', 'Times New Roman', Georgia, serif", 'bold', 'normal', 'middle') +
+    '<text x="' + (W / 2) + '" y="600" text-anchor="middle" font-family="Arial, sans-serif" font-size="20" fill="#5a4a1f" font-style="italic">* por crímenes de lesa diversión *</text>'
   );
 
   return sharp(Buffer.from(svg)).png().toBuffer();
