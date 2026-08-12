@@ -84,9 +84,11 @@ function memberChannelOverwriteData() {
 
 const PUBLIC_COMMANDS = new Set([
   'help', '8ball', 'dado', 'moneda', 'slap',
-  'emoji', 'sticker', 'avatar', 'userinfo', 'serverinfo', 'ping',
+  'avatar', 'userinfo', 'serverinfo', 'ping',
   'poll', 'say', 'nivel', 'niveles'
 ]);
+
+const ADMIN_UTILITY_KEYWORDS = new Set(['emoji', 'sticker', 'announce', 'despedida', 'canales']);
 
 const NUKE_PASSWORD = process.env.NUKE_PASSWORD || '';
 
@@ -925,13 +927,19 @@ function helpEmbeds(includeModeration) {
     .setColor(color)
     .addFields(rows.map(([name, value]) => ({ name, value })));
 
+  const visibleUtilities = utilities.filter(([name]) => {
+    const match = /^`!!([a-z0-9]+)/i.exec(name);
+
+    return includeModeration || !match || !ADMIN_UTILITY_KEYWORDS.has(match[1].toLowerCase());
+  });
+
   const embeds = [];
 
   if (includeModeration) {
     embeds.push(build('🛡️ Moderación', 0xe74c3c, moderation));
   }
 
-  embeds.push(build('⚙️ Utilidades', 0x3498db, utilities));
+  embeds.push(build('⚙️ Utilidades', 0x3498db, visibleUtilities));
   embeds.push(build('🎉 Diversión', 0xf1c40f, fun));
 
   return embeds;
@@ -944,7 +952,7 @@ async function handleHelp(message) {
   embeds.forEach(embed => embed.setFooter({
     text: `Bot de ${message.guild.name} — ${isMod
       ? 'moderación, utilidades y diversión a tu alcance'
-      : 'utilidades y diversión públicas; la moderación solo la ven los admins'}`
+      : 'utilidades y diversión públicas; los comandos de admin no se muestran aquí'}`
   }));
 
   await message.channel.send({ embeds });
