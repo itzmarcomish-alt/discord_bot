@@ -54,6 +54,8 @@ const MEMBER_DENIED_ROLES = new Set([
   '1536886178094252112'
 ]);
 
+const PUBLIC_COMMANDS = new Set(['help', '8ball', 'dado', 'moneda', 'slap']);
+
 const ADMIN_ONLY_CHANNELS = new Set([
   ...(process.env.ADMIN_ONLY_CHANNELS || '').split(',').map(id => id.trim()).filter(Boolean),
   ...(MODLOG_CHANNEL_ID ? [MODLOG_CHANNEL_ID] : []),
@@ -828,7 +830,7 @@ async function handleHelp(message) {
   const embeds = helpEmbeds();
 
   embeds.forEach(embed => embed.setFooter({
-    text: `Bot de ${message.guild.name} — todos los comandos son solo para admins`
+    text: `Bot de ${message.guild.name} — !!help y los de diversión son públicos, el resto solo admins`
   }));
 
   await message.channel.send({ embeds });
@@ -1796,7 +1798,7 @@ client.on('messageCreate', async message => {
 
     if (!message.guild) return;
 
-    if (!isAdmin(message.member)) {
+    if (!PUBLIC_COMMANDS.has(commandName) && !isAdmin(message.member)) {
       return message.reply(
         `❌ Necesitas tener el rol ${adminRoleLabel()} para usar esto.`
       );
