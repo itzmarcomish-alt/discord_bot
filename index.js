@@ -42,8 +42,13 @@ const LEAVE_MESSAGE = process.env.LEAVE_MESSAGE || '👋 **{username}** abandon�
 const LEAVE_CHANNEL_ID = process.env.LEAVE_CHANNEL_ID || '1536992463875735663';
 let leaveMessageOverride = null;
 
+const LEVEL_CHANNEL_ID = process.env.LEVEL_CHANNEL_ID || '1536991424032014428';
+const LEVELS = new Map();
+
 const ADMIN_ONLY_CHANNELS = new Set([
   ...(process.env.ADMIN_ONLY_CHANNELS || '').split(',').map(id => id.trim()).filter(Boolean),
+  ...(MODLOG_CHANNEL_ID ? [MODLOG_CHANNEL_ID] : []),
+  '1536881063580667934',
   '1536992463875735663',
   '1536991424032014428'
 ]);
@@ -711,6 +716,92 @@ async function enforceAdminOnlyChannels(message) {
   }
 
   return true;
+}
+
+function levelInfo(xp) {
+  let level = 1;
+  let remaining = xp;
+  let needed = 50;
+
+  while (remaining >= needed) {
+    remaining -= needed;
+    level += 1;
+    needed = 50 * level;
+  }
+
+  return { level, xpIntoLevel: remaining, xpToNext: needed };
+}
+
+async function grantXp(message) {
+  if (!message.guild) return;
+  if (message.author.bot) return;
+
+  const key = `${message.guild.id}:${message.author.id}`;
+  const data = LEVELS.get(key) || { xp: 0, level: 1 };
+
+  data.xp += 5 + Math.floor(Math.random() * 10);
+
+  const info = levelInfo(data.xp);
+
+  if (info.level > data.level) {
+    data.level = info.level;
+
+    const channel = await client.channels.fetch(LEVEL_CHANNEL_ID).catch(() => null);
+
+    if (channel) {
+      await channel
+        .send(`🎉 ¡${message.author} subió al **nivel ${info.level}**!`)
+        .catch(console.error);
+    }
+  }
+
+  LEVELS.set(key, data);
+}
+
+async function handleNivel(message, rest) {
+  const targetId = parseUserId(rest);
+  const user = targetId
+    ? await message.client.users.fetch(targetId).catch(() => null)
+    : message.author;
+
+  if (!user) return message.reply('❌ No encontré a ese usuario.');
+
+  const key = `${message.guild.id}:${user.id}`;
+  const data = LEVELS.get(key) || { xp: 0, level: 1 };
+  const info = levelInfo(data.xp);
+  const barLength = 10;
+  const progress = Math.min(barLength, Math.round((info.xpIntoLevel / info.xpToNext) * barLength));
+  const bar = '🟩'.repeat(progress) + '⬛'.repeat(barLength - progress);
+
+  await message.reply(
+    `**${user.tag}**\n` +
+    `Nivel: **${info.level}**\n` +
+    `XP: ${data.xp}\n` +
+    `Progreso: ${bar} (${info.xpIntoLevel}/${info.xpToNext})`
+  );
+}
+
+async function handleNiveles(message) {
+  const entries = [...LEVELS.entries()]
+    .filter(([key]) => key.startsWith(`${message.guild.id}:`))
+    .sort((a, b) => b[1].xp - a[1].xp)
+    .slice(0, 10);
+
+  if (entries.length === 0) {
+    return message.reply('Aún no hay datos de niveles en este servidor.');
+  }
+
+  const lines = [];
+
+  for (let i = 0; i < entries.length; i++) {
+    const userId = entries[i][0].split(':')[1];
+    const user = await message.client.users.fetch(userId).catch(() => null);
+    const info = levelInfo(entries[i][1].xp);
+
+    lines.push(`${i + 1}. ${user ? user.tag : userId} — Nivel **${info.level}** (${entries[i][1].xp} XP)`);
+  }
+
+  await message.reply(`🏆 **Top niveles**\n${lines.join('\n')}`);
 }
 
 async function handleMsgBan(message, rest) {
@@ -1523,6 +1614,8 @@ client.on('messageCreate', async message => {
 
     if (await enforceAdminOnlyChannels(message)) return;
 
+    await grantXp(message);
+
     const antiScam = await runAntiScam(message);
 
     if (antiScam?.deleted) return;
@@ -1539,7 +1632,7 @@ client.on('messageCreate', async message => {
 
     if (!content.startsWith('!!')) return;
 
-    const commandMatch = /^!!(emoji|sticker|erasechat|ban|kick|timeout|unban|warn|warns|delwarn|purgeusuario|slowmode|lock|unlock|announce|avatar|userinfo|serverinfo|ping|poll|say|8ball|dado|moneda|slap|mute|unmute|vc|antiraid|despedida)\b/i.exec(content);
+    const commandMatch = /^!!(emoji|sticker|erasechat|ban|kick|timeout|unban|warn|warns|delwarn|purgeusuario|slowmode|lock|unlock|announce|avatar|userinfo|serverinfo|ping|poll|say|8ball|dado|moneda|slap|mute|unmute|vc|antiraid|despedida|nivel|niveles)\b/i.exec(content);
 
     if (!commandMatch) return;
 
@@ -1699,6 +1792,16 @@ client.on('messageCreate', async message => {
 
     if (commandName === 'despedida') {
       await handleDespedida(message, rest);
+      return;
+    }
+
+    if (commandName === 'nivel') {
+      await handleNivel(message, rest);
+      return;
+    }
+
+    if (commandName === 'niveles') {
+      await handleNiveles(message);
       return;
     }
 
