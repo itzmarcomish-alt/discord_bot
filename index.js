@@ -42,6 +42,12 @@ const LEAVE_MESSAGE = process.env.LEAVE_MESSAGE || '👋 **{username}** abandon�
 const LEAVE_CHANNEL_ID = process.env.LEAVE_CHANNEL_ID || '1536992463875735663';
 let leaveMessageOverride = null;
 
+const ADMIN_ONLY_CHANNELS = new Set([
+  ...(process.env.ADMIN_ONLY_CHANNELS || '').split(',').map(id => id.trim()).filter(Boolean),
+  '1536992463875735663',
+  '1536991424032014428'
+]);
+
 const RAID_JOIN_THRESHOLD = parseInt(process.env.RAID_JOIN_THRESHOLD, 10) || 5;
 const RAID_JOIN_WINDOW_MS = 10 * 1000;
 const RAID_COOLDOWN_MS = 60 * 60 * 1000;
@@ -684,6 +690,24 @@ async function ensureMsgTarget(message, targetId, action, member) {
   if (member && isAdmin(member)) {
     await message.reply(`❌ No puedes aplicar **${action}** a un administrador.`);
     return false;
+  }
+
+  return true;
+}
+
+async function enforceAdminOnlyChannels(message) {
+  if (!ADMIN_ONLY_CHANNELS.has(message.channelId)) return false;
+  if (message.author.bot) return false;
+  if (isAdmin(message.member)) return false;
+
+  await message.delete().catch(() => {});
+
+  const notice = await message.channel
+    .send(`❌ Solo los admins pueden escribir en <#${message.channelId}>.`)
+    .catch(() => null);
+
+  if (notice) {
+    setTimeout(() => notice.delete().catch(() => {}), 5000);
   }
 
   return true;
@@ -1496,6 +1520,8 @@ client.once('clientReady', () => {
 client.on('messageCreate', async message => {
   try {
     if (message.author.bot) return;
+
+    if (await enforceAdminOnlyChannels(message)) return;
 
     const antiScam = await runAntiScam(message);
 
