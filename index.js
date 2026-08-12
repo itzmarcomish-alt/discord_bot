@@ -684,7 +684,7 @@ async function handleMsgBan(message, rest) {
     return message.reply('❌ Uso: `!!ban <@usuario> [razón]`');
   }
 
-  const reason = reasonParts.join(' ') || 'No especificada';
+  const reason = reasonParts.join(' ') || 'Sin razón especificada';
   const member = await getGuildMember(message.guild, targetId);
 
   if (!member) {
@@ -717,7 +717,7 @@ async function handleMsgKick(message, rest) {
     return message.reply('❌ Uso: `!!kick <@usuario> [razón]`');
   }
 
-  const reason = reasonParts.join(' ') || 'No especificada';
+  const reason = reasonParts.join(' ') || 'Sin razón especificada';
   const member = await getGuildMember(message.guild, targetId);
 
   if (!member) {
@@ -751,7 +751,7 @@ async function handleMsgTimeout(message, rest) {
   }
 
   const duration = rawDuration || '1h';
-  const reason = reasonParts.join(' ') || 'No especificada';
+  const reason = reasonParts.join(' ') || 'Sin razón especificada';
   const ms = parseDuration(duration);
 
   if (!ms) {
@@ -881,7 +881,7 @@ async function handleUnban(message, rest) {
     return message.reply('❌ Uso: `!!unban <id_usuario> [razón]`');
   }
 
-  const reason = reasonParts.join(' ') || 'No especificada';
+  const reason = reasonParts.join(' ') || 'Sin razón especificada';
 
   try {
     await message.guild.bans.remove(userId, reason);
@@ -910,7 +910,7 @@ async function handleWarn(message, rest) {
     return message.reply('❌ Uso: `!!warn <@usuario> [razón]`');
   }
 
-  const reason = reasonParts.join(' ') || 'No especificada';
+  const reason = reasonParts.join(' ') || 'Sin razón especificada';
   const member = await getGuildMember(message.guild, targetId);
 
   if (!member) {
