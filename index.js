@@ -849,6 +849,49 @@ async function handleTimeout(interaction) {
   }
 }
 
+async function handleEraseChat(message, count) {
+  if (count < 1) {
+    return message.reply('❌ La cantidad debe ser al menos 1.');
+  }
+
+  if (count > 1000) {
+    return message.reply('❌ Solo puedo eliminar hasta 1000 mensajes por ejecución.');
+  }
+
+  if (!message.channel.permissionsFor(message.guild.members.me)?.has(PermissionFlagsBits.ManageMessages)) {
+    return message.reply('❌ Necesito el permiso de **Gestionar mensajes** para borrar.');
+  }
+
+  let deleted = 0;
+
+  if (count === 1) {
+    await message.delete().catch(() => {});
+    deleted = 1;
+  } else {
+    let remaining = count;
+
+    while (remaining > 0) {
+      const batch = Math.min(remaining, 100);
+
+      const result = await message.channel
+        .bulkDelete(batch, { filterOld: true })
+        .catch(error => {
+          console.error(error);
+          return null;
+        });
+
+      if (!result || result.size === 0) break;
+
+      deleted += result.size;
+      remaining -= result.size;
+    }
+  }
+
+  await message.channel
+    .send(`✅ ${deleted} mensaje(s) eliminado(s).`)
+    .catch(() => {});
+}
+
 client.once('clientReady', () => {
   console.log(`✅ Conectado como ${client.user.tag}`);
 });
@@ -873,12 +916,33 @@ client.on('messageCreate', async message => {
 
     if (!content.startsWith('!!')) return;
 
-    const commandMatch = /^!!(emoji|sticker)\b/i.exec(content);
+    const commandMatch = /^!!(emoji|sticker|erasechat)\b/i.exec(content);
 
     if (!commandMatch) return;
 
     const commandName = commandMatch[1].toLowerCase();
     const rest = content.slice(commandMatch[0].length).trim();
+
+    if (!message.guild) return;
+
+    if (!isAdmin(message.member)) {
+      return message.reply(
+        `❌ Necesitas tener el rol ${adminRoleLabel()} para usar esto.`
+      );
+    }
+
+    if (commandName === 'erasechat') {
+      const countMatch = /^(\d+)$/.exec(rest);
+
+      if (!countMatch) {
+        return message.reply(
+          '❌ Uso: `!!erasechat <cantidad>`. Ej: `!!erasechat 20`'
+        );
+      }
+
+      await handleEraseChat(message, parseInt(countMatch[1], 10));
+      return;
+    }
 
     let messageId = null;
 
@@ -892,14 +956,6 @@ client.on('messageCreate', async message => {
       }
 
       messageId = idMatch[1];
-    }
-
-    if (!message.guild) return;
-
-    if (!isAdmin(message.member)) {
-      return message.reply(
-        `❌ Necesitas tener el rol ${adminRoleLabel()} para usar esto.`
-      );
     }
 
     let attachment = null;
