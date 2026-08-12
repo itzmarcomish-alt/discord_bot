@@ -83,7 +83,7 @@ function memberChannelOverwriteData() {
 }
 
 const PUBLIC_COMMANDS = new Set([
-  'help', '8ball', 'dado', 'moneda', 'slap',
+  'help', '8ball', 'dado', 'moneda', 'slap', 'quote',
   'avatar', 'userinfo', 'serverinfo', 'ping',
   'poll', 'say', 'nivel', 'niveles'
 ]);
@@ -919,7 +919,8 @@ function helpEmbeds(includeModeration) {
     ['`!!8ball <pregunta>`', 'Bola mágica: responde tu pregunta.'],
     ['`!!dado [caras]`', 'Lanza un dado (6 caras por defecto).'],
     ['`!!moneda`', 'Lanza una moneda: cara o cruz.'],
-    ['`!!slap <@usuario>`', 'Le da una bofetada a un usuario.']
+    ['`!!slap <@usuario>`', 'Le da una bofetada a un usuario.'],
+    ['`!!quote` (respondiendo a un mensaje)', 'Cita el mensaje en una imagen con su autor y avatar.']
   ];
 
   const build = (title, color, rows) => new EmbedBuilder()
@@ -1775,6 +1776,130 @@ async function handleSlap(message, rest) {
   await message.channel.send(phrase);
 }
 
+function escapeXml(text) {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
+
+function wrapText(text, maxChars) {
+  const words = text.split(/\s+/);
+  const lines = [];
+  let line = '';
+
+  for (let word of words) {
+    while (word.length > maxChars) {
+      if (line) {
+        lines.push(line);
+        line = '';
+      }
+
+      lines.push(word.slice(0, maxChars));
+      word = word.slice(maxChars);
+    }
+
+    const candidate = line ? `${line} ${word}` : word;
+
+    if (candidate.length <= maxChars) {
+      line = candidate;
+    } else {
+      if (line) lines.push(line);
+      line = word;
+    }
+  }
+
+  if (line) lines.push(line);
+
+  return lines.length ? lines : [''];
+}
+
+async function createQuoteImage(content, authorName, avatarUrl) {
+  const WIDTH = 800;
+  const PADDING = 50;
+  const FONT_SIZE = 32;
+  const LINE_HEIGHT = 44;
+  const AVATAR_SIZE = 130;
+
+  const lines = wrapText(content, 26);
+
+  lines[0] = `"${lines[0]}`;
+  lines[lines.length - 1] = `${lines[lines.length - 1]}"`;
+
+  const textBlock = lines.length * LINE_HEIGHT;
+  const quoteStart = PADDING + 40;
+  const attributionY = quoteStart + textBlock + 20;
+  const avatarY = attributionY + 50;
+  const HEIGHT = avatarY + AVATAR_SIZE + PADDING;
+
+  const avatar = await downloadImage(avatarUrl);
+  const avatarBuffer = await sharp(avatar)
+    .resize(AVATAR_SIZE, AVATAR_SIZE, { fit: 'cover' })
+    .composite([{
+      input: Buffer.from(
+        `<svg width="${AVATAR_SIZE}" height="${AVATAR_SIZE}" xmlns="http://www.w3.org/2000/svg">` +
+        `<circle cx="${AVATAR_SIZE / 2}" cy="${AVATAR_SIZE / 2}" r="${AVATAR_SIZE / 2}" fill="white"/>` +
+        '</svg>'
+      ),
+      blend: 'dest-in'
+    }])
+    .png()
+    .toBuffer();
+
+  const avatarBase64 = avatarBuffer.toString('base64');
+
+  const svg =
+    `<svg width="${WIDTH}" height="${HEIGHT}" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">` +
+    `<rect width="${WIDTH}" height="${HEIGHT}" fill="#ffffff"/>` +
+    `<text x="${PADDING}" y="${quoteStart}" font-family="Georgia, serif" font-size="${FONT_SIZE}" font-style="italic" fill="#222222">` +
+    lines.map((line, index) =>
+      `<tspan x="${PADDING}" dy="${index === 0 ? 0 : LINE_HEIGHT}">${escapeXml(line)}</tspan>`
+    ).join('') +
+    `</text>` +
+    `<text x="${PADDING}" y="${attributionY}" font-family="Arial, sans-serif" font-size="26" fill="#777777">-${escapeXml(authorName)}</text>` +
+    `<image x="${PADDING}" y="${avatarY}" width="${AVATAR_SIZE}" height="${AVATAR_SIZE}" xlink:href="data:image/png;base64,${avatarBase64}"/>` +
+    `</svg>`;
+
+  return sharp(Buffer.from(svg)).png().toBuffer();
+}
+
+async function handleQuote(message) {
+  if (!message.reference) {
+    return message.reply('❌ Responde a un mensaje de texto para citarlo. Ej: `!!quote`');
+  }
+
+  const target = await message.fetchReference().catch(() => null);
+
+  if (!target) {
+    return message.reply('❌ No pude obtener el mensaje al que respondiste.');
+  }
+
+  const content = (target.content || '').trim();
+
+  if (!content) {
+    return message.reply('❌ Ese mensaje no tiene texto para citar.');
+  }
+
+  if (target.author.bot) {
+    return message.reply('❌ Solo puedo citar mensajes de personas.');
+  }
+
+  try {
+    const image = await createQuoteImage(
+      content,
+      target.author.username,
+      target.author.displayAvatarURL({ size: 128, extension: 'png' })
+    );
+
+    await message.channel.send({ files: [{ attachment: image, name: 'quote.png' }] });
+  } catch (error) {
+    console.error(error);
+    await message.reply(`❌ No pude crear la cita.\n\`${error.message}\``);
+  }
+}
+
 async function handleMute(message, rest) {
   const [rawTarget, rawDuration, ...reasonParts] = rest.split(/\s+/);
   const targetId = parseUserId(rawTarget);
@@ -2004,7 +2129,7 @@ client.on('messageCreate', async message => {
 
     if (!content.startsWith('!!')) return;
 
-    const commandMatch = /^!!(emoji|sticker|ban|kick|timeout|unban|warn|warns|delwarn|slowmode|lock|unlock|announce|avatar|userinfo|serverinfo|ping|poll|say|8ball|dado|moneda|slap|mute|unmute|vc|antiraid|despedida|nivel|niveles|help|canales)\b/i.exec(content);
+    const commandMatch = /^!!(emoji|sticker|ban|kick|timeout|unban|warn|warns|delwarn|slowmode|lock|unlock|announce|avatar|userinfo|serverinfo|ping|poll|say|8ball|dado|moneda|slap|quote|mute|unmute|vc|antiraid|despedida|nivel|niveles|help|canales)\b/i.exec(content);
 
     if (!commandMatch) return;
 
@@ -2121,6 +2246,11 @@ client.on('messageCreate', async message => {
 
     if (commandName === 'slap') {
       await handleSlap(message, rest);
+      return;
+    }
+
+    if (commandName === 'quote') {
+      await handleQuote(message);
       return;
     }
 
