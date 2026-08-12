@@ -105,67 +105,6 @@ const commands = [
     )
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
 
-  new SlashCommandBuilder()
-    .setName('ban')
-    .setDescription('Banea a un usuario del servidor')
-    .addUserOption(option =>
-      option
-        .setName('usuario')
-        .setDescription('Usuario a banear')
-        .setRequired(true)
-    )
-    .addStringOption(option =>
-      option
-        .setName('razon')
-        .setDescription('Motivo del baneo')
-    )
-    .setDefaultMemberPermissions(PermissionFlagsBits.BanMembers),
-
-  new SlashCommandBuilder()
-    .setName('kick')
-    .setDescription('Expulsa a un usuario del servidor')
-    .addUserOption(option =>
-      option
-        .setName('usuario')
-        .setDescription('Usuario a expulsar')
-        .setRequired(true)
-    )
-    .addStringOption(option =>
-      option
-        .setName('razon')
-        .setDescription('Motivo de la expulsión')
-    )
-    .setDefaultMemberPermissions(PermissionFlagsBits.KickMembers),
-
-  new SlashCommandBuilder()
-    .setName('timeout')
-    .setDescription('Silencia temporalmente a un usuario')
-    .addUserOption(option =>
-      option
-        .setName('usuario')
-        .setDescription('Usuario a silenciar')
-        .setRequired(true)
-    )
-    .addStringOption(option =>
-      option
-        .setName('duracion')
-        .setDescription('Duración del timeout (por defecto: 1 hora)')
-        .setChoices(
-          { name: '1 minuto', value: '1m' },
-          { name: '5 minutos', value: '5m' },
-          { name: '1 hora', value: '1h' },
-          { name: '6 horas', value: '6h' },
-          { name: '1 día', value: '1d' },
-          { name: '7 días', value: '7d' }
-        )
-    )
-    .addStringOption(option =>
-      option
-        .setName('razon')
-        .setDescription('Motivo del timeout')
-    )
-    .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers),
-
   new ContextMenuCommandBuilder()
     .setName('Convertir a emoji')
     .setType(ApplicationCommandType.Message)
@@ -215,56 +154,6 @@ function parseDuration(value) {
 
 async function getGuildMember(guild, userId) {
   return guild.members.fetch(userId).catch(() => null);
-}
-
-async function ensureAdmin(interaction) {
-  if (!interaction.guild) {
-    await interaction.reply({
-      content: '❌ Este comando solo puede utilizarse dentro de un servidor.',
-      ephemeral: true
-    });
-    return false;
-  }
-
-  if (!isAdmin(interaction.member)) {
-    await interaction.reply({
-      content: `❌ Necesitas tener el rol ${adminRoleLabel()} para usar esto.`,
-      ephemeral: true
-    });
-    return false;
-  }
-
-  return true;
-}
-
-async function ensureTarget(interaction, target, action) {
-  if (target.id === interaction.user.id) {
-    await interaction.reply({
-      content: `❌ No puedes aplicarte **${action}** a ti mismo.`,
-      ephemeral: true
-    });
-    return false;
-  }
-
-  if (target.id === client.user.id) {
-    await interaction.reply({
-      content: `❌ No puedes aplicarme **${action}**.`,
-      ephemeral: true
-    });
-    return false;
-  }
-
-  const member = await getGuildMember(interaction.guild, target.id);
-
-  if (member && isAdmin(member)) {
-    await interaction.reply({
-      content: `❌ No puedes aplicar **${action}** a un administrador.`,
-      ephemeral: true
-    });
-    return false;
-  }
-
-  return member;
 }
 
 async function downloadImage(url) {
@@ -768,107 +657,128 @@ async function runAntiScam(message) {
   }
 }
 
-async function handleBan(interaction) {
-  if (!(await ensureAdmin(interaction))) return;
+async function ensureMsgTarget(message, targetId, action, member) {
+  if (targetId === message.author.id) {
+    await message.reply(`❌ No puedes aplicarte **${action}** a ti mismo.`);
+    return false;
+  }
 
-  const target = interaction.options.getUser('usuario');
-  const reason = interaction.options.getString('razon') || 'No especificada';
+  if (targetId === client.user.id) {
+    await message.reply(`❌ No puedes aplicarme **${action}**.`);
+    return false;
+  }
 
-  const member = await ensureTarget(interaction, target, 'el baneo');
-  if (member === false) return;
+  if (member && isAdmin(member)) {
+    await message.reply(`❌ No puedes aplicar **${action}** a un administrador.`);
+    return false;
+  }
 
-  await interaction.deferReply({ ephemeral: true });
+  return true;
+}
+
+async function handleMsgBan(message, rest) {
+  const [rawTarget, ...reasonParts] = rest.split(/\s+/);
+  const targetId = parseUserId(rawTarget);
+
+  if (!targetId) {
+    return message.reply('❌ Uso: `!!ban <@usuario> [razón]`');
+  }
+
+  const reason = reasonParts.join(' ') || 'No especificada';
+  const member = await getGuildMember(message.guild, targetId);
+
+  if (!member) {
+    return message.reply(`❌ No pude encontrar a \`${targetId}\` en este servidor.`);
+  }
+
+  if (!(await ensureMsgTarget(message, targetId, 'el baneo', member))) return;
 
   try {
-    await interaction.guild.members.ban(target.id, { reason });
-    await interaction.editReply(`✅ **${target.tag}** fue baneado.\n**Motivo:** ${reason}`);
+    await message.guild.members.ban(targetId, { reason });
+    await message.channel.send(`✅ **${member.user.tag}** fue baneado.\n**Motivo:** ${reason}`);
 
     await logModAction(
-      interaction.guild,
-      interaction.user,
+      message.guild,
+      message.author,
       '🚫 Baneo',
-      `**Usuario:** <@${target.id}> (${target.tag})\n**Motivo:** ${reason}`
+      `**Usuario:** ${member}\n**Motivo:** ${reason}`
     );
   } catch (error) {
     console.error(error);
-    await interaction.editReply('❌ No pude banear al usuario. ¿Tengo permisos de **Banear miembros**?');
+    await message.reply('❌ No pude banear al usuario. ¿Tengo permisos de **Banear miembros**?');
   }
 }
 
-async function handleKick(interaction) {
-  if (!(await ensureAdmin(interaction))) return;
+async function handleMsgKick(message, rest) {
+  const [rawTarget, ...reasonParts] = rest.split(/\s+/);
+  const targetId = parseUserId(rawTarget);
 
-  const target = interaction.options.getUser('usuario');
-  const reason = interaction.options.getString('razon') || 'No especificada';
-
-  const member = await ensureTarget(interaction, target, 'la expulsión');
-  if (member === false) return;
-
-  if (!member) {
-    return interaction.reply({
-      content: `❌ No pude encontrar a **${target.tag}** en este servidor.`,
-      ephemeral: true
-    });
+  if (!targetId) {
+    return message.reply('❌ Uso: `!!kick <@usuario> [razón]`');
   }
 
-  await interaction.deferReply({ ephemeral: true });
+  const reason = reasonParts.join(' ') || 'No especificada';
+  const member = await getGuildMember(message.guild, targetId);
+
+  if (!member) {
+    return message.reply(`❌ No pude encontrar a \`${targetId}\` en este servidor.`);
+  }
+
+  if (!(await ensureMsgTarget(message, targetId, 'la expulsión', member))) return;
 
   try {
     await member.kick(reason);
-    await interaction.editReply(`✅ **${target.tag}** fue expulsado.\n**Motivo:** ${reason}`);
+    await message.channel.send(`✅ **${member.user.tag}** fue expulsado.\n**Motivo:** ${reason}`);
 
     await logModAction(
-      interaction.guild,
-      interaction.user,
+      message.guild,
+      message.author,
       '🥾 Expulsión',
-      `**Usuario:** <@${target.id}> (${target.tag})\n**Motivo:** ${reason}`
+      `**Usuario:** ${member}\n**Motivo:** ${reason}`
     );
   } catch (error) {
     console.error(error);
-    await interaction.editReply('❌ No pude expulsar al usuario. ¿Tengo permisos de **Expulsar miembros**?');
+    await message.reply('❌ No pude expulsar al usuario. ¿Tengo permisos de **Expulsar miembros**?');
   }
 }
 
-async function handleTimeout(interaction) {
-  if (!(await ensureAdmin(interaction))) return;
+async function handleMsgTimeout(message, rest) {
+  const [rawTarget, rawDuration, ...reasonParts] = rest.split(/\s+/);
+  const targetId = parseUserId(rawTarget);
 
-  const target = interaction.options.getUser('usuario');
-  const duration = interaction.options.getString('duracion') || '1h';
-  const reason = interaction.options.getString('razon') || 'No especificada';
+  if (!targetId) {
+    return message.reply('❌ Uso: `!!timeout <@usuario> <duración> [razón]`. Ej: `!!timeout @usuario 1h`');
+  }
+
+  const duration = rawDuration || '1h';
+  const reason = reasonParts.join(' ') || 'No especificada';
   const ms = parseDuration(duration);
 
   if (!ms) {
-    return interaction.reply({
-      content: '❌ Duración no válida. Usa valores como `1m`, `5m`, `1h`, `1d`.',
-      ephemeral: true
-    });
+    return message.reply(`❌ Duración no válida: \`${duration}\`. Usa valores como \`1m\`, \`5m\`, \`1h\`, \`1d\`.`);
   }
 
-  const member = await ensureTarget(interaction, target, 'el timeout');
-  if (member === false) return;
+  const member = await getGuildMember(message.guild, targetId);
 
   if (!member) {
-    return interaction.reply({
-      content: `❌ No pude encontrar a **${target.tag}** en este servidor.`,
-      ephemeral: true
-    });
+    return message.reply(`❌ No pude encontrar a \`${targetId}\` en este servidor.`);
   }
 
-  await interaction.deferReply({ ephemeral: true });
+  if (!(await ensureMsgTarget(message, targetId, 'el timeout', member))) return;
 
   try {
     await member.timeout(ms, reason);
-    await interaction.editReply(`✅ **${target.tag}** recibió un timeout de ${duration}.\n**Motivo:** ${reason}`);
+    await message.channel.send(`✅ **${member.user.tag}** recibió un timeout de ${duration}.\n**Motivo:** ${reason}`);
 
     await logModAction(
-      interaction.guild,
-      interaction.user,
+      message.guild,
+      message.author,
       '🔇 Timeout',
-      `**Usuario:** <@${target.id}> (${target.tag})\n**Duración:** ${duration}\n**Motivo:** ${reason}`
+      `**Usuario:** ${member}\n**Duración:** ${duration}\n**Motivo:** ${reason}`
     );
   } catch (error) {
     console.error(error);
-    await interaction.editReply('❌ No pude aplicar el timeout. ¿Tengo permisos de **Moderar miembros**?');
+    await message.reply('❌ No pude aplicar el timeout. ¿Tengo permisos de **Moderar miembros**?');
   }
 }
 
@@ -1251,7 +1161,7 @@ client.on('messageCreate', async message => {
 
     if (!content.startsWith('!!')) return;
 
-    const commandMatch = /^!!(emoji|sticker|erasechat|unban|warn|warns|delwarn|purgeusuario|slowmode|lock|unlock|announce)\b/i.exec(content);
+    const commandMatch = /^!!(emoji|sticker|erasechat|ban|kick|timeout|unban|warn|warns|delwarn|purgeusuario|slowmode|lock|unlock|announce)\b/i.exec(content);
 
     if (!commandMatch) return;
 
@@ -1321,6 +1231,21 @@ client.on('messageCreate', async message => {
 
     if (commandName === 'announce') {
       await handleAnnounce(message, rest);
+      return;
+    }
+
+    if (commandName === 'ban') {
+      await handleMsgBan(message, rest);
+      return;
+    }
+
+    if (commandName === 'kick') {
+      await handleMsgKick(message, rest);
+      return;
+    }
+
+    if (commandName === 'timeout') {
+      await handleMsgTimeout(message, rest);
       return;
     }
 
@@ -1412,18 +1337,6 @@ client.on('interactionCreate', async interaction => {
         }
 
         await processSticker(interactionCtx(interaction), attachment);
-      }
-
-      if (interaction.commandName === 'ban') {
-        await handleBan(interaction);
-      }
-
-      if (interaction.commandName === 'kick') {
-        await handleKick(interaction);
-      }
-
-      if (interaction.commandName === 'timeout') {
-        await handleTimeout(interaction);
       }
 
       return;
