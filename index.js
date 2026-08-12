@@ -63,7 +63,7 @@ const MEMBER_DENIED_ROLES = new Set([
 const PUBLIC_COMMANDS = new Set([
   'help', '8ball', 'dado', 'moneda', 'slap',
   'emoji', 'sticker', 'avatar', 'userinfo', 'serverinfo', 'ping',
-  'poll', 'say', 'announce', 'nivel', 'niveles', 'despedida', 'canales'
+  'poll', 'say', 'nivel', 'niveles'
 ]);
 
 const NUKE_PASSWORD = process.env.NUKE_PASSWORD || '';
