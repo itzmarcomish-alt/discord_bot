@@ -11,7 +11,9 @@ const {
   ContextMenuCommandBuilder,
   ApplicationCommandType,
   PermissionFlagsBits,
-  EmbedBuilder
+  EmbedBuilder,
+  ChannelType,
+  GuildVerificationLevel
 } = require('discord.js');
 
 const sharp = require('sharp');
@@ -19,6 +21,7 @@ const sharp = require('sharp');
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMembers,
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent
   ]
@@ -34,6 +37,16 @@ const SCAM_EXCLUDED_CHANNELS = new Set(
 );
 const IMAGE_SPAM_THRESHOLD = 4;
 const IMAGE_SPAM_WINDOW_MS = 60 * 1000;
+
+const LEAVE_MESSAGE = process.env.LEAVE_MESSAGE || '👋 **{username}** abandonó el servidor.';
+const LEAVE_CHANNEL_ID = process.env.LEAVE_CHANNEL_ID || '';
+let leaveMessageOverride = null;
+
+const RAID_JOIN_THRESHOLD = parseInt(process.env.RAID_JOIN_THRESHOLD, 10) || 5;
+const RAID_JOIN_WINDOW_MS = 10 * 1000;
+const RAID_COOLDOWN_MS = 60 * 60 * 1000;
+const raidJoins = new Map();
+const raidModeGuilds = new Set();
 
 const INVITE_PATTERN = /discord\.(?:gg\/|com\/invite\/)[a-zA-Z0-9-]+/i;
 
@@ -1137,6 +1150,345 @@ async function handleAnnounce(message, rest) {
   );
 }
 
+async function handleAvatar(message, rest) {
+  const targetId = parseUserId(rest);
+  const user = targetId
+    ? await message.client.users.fetch(targetId).catch(() => null)
+    : message.author;
+
+  if (!user) return message.reply('❌ No encontré a ese usuario.');
+
+  const embed = new EmbedBuilder()
+    .setTitle(`Avatar de ${user.tag}`)
+    .setImage(user.displayAvatarURL({ size: 1024, extension: 'png' }))
+    .setColor(0x3498db);
+
+  await message.channel.send({ embeds: [embed] });
+}
+
+async function handleUserinfo(message, rest) {
+  const targetId = parseUserId(rest);
+  const user = targetId
+    ? await message.client.users.fetch(targetId).catch(() => null)
+    : message.author;
+
+  if (!user) return message.reply('❌ No encontré a ese usuario.');
+
+  const member = await getGuildMember(message.guild, user.id);
+  const memberRoles = member
+    ? member.roles.cache.filter(role => role.id !== message.guild.id)
+    : null;
+
+  const embed = new EmbedBuilder()
+    .setTitle(user.tag)
+    .setThumbnail(user.displayAvatarURL())
+    .setColor(0x3498db)
+    .addFields([
+      { name: 'ID', value: user.id },
+      { name: 'Cuenta creada', value: user.createdAt.toLocaleDateString() },
+      { name: 'Entró al servidor', value: member ? member.joinedAt.toLocaleDateString() : '—' },
+      { name: 'Bot', value: user.bot ? 'Sí' : 'No' },
+      {
+        name: `Roles (${memberRoles ? memberRoles.size : 0})`,
+        value: memberRoles && memberRoles.size > 0
+          ? memberRoles.map(role => role.toString()).join(' ').slice(0, 1024)
+          : '—'
+      }
+    ]);
+
+  await message.channel.send({ embeds: [embed] });
+}
+
+async function handleServerinfo(message) {
+  const guild = message.guild;
+
+  const members = await guild.members.fetch().catch(() => null);
+  const total = members ? members.size : guild.memberCount;
+  const bots = members ? members.filter(member => member.user.bot).size : 0;
+  const textChannels = guild.channels.cache.filter(channel => channel.type === ChannelType.GuildText).size;
+  const voiceChannels = guild.channels.cache.filter(channel => channel.type === ChannelType.GuildVoice).size;
+  const owner = await guild.fetchOwner().catch(() => null);
+
+  const embed = new EmbedBuilder()
+    .setTitle(guild.name)
+    .setThumbnail(guild.iconURL())
+    .setColor(0x9b59b6)
+    .addFields([
+      { name: 'ID', value: guild.id },
+      { name: 'Dueño', value: owner ? owner.user.tag : '—' },
+      { name: 'Miembros', value: `${total} (${bots} bots)` },
+      { name: 'Canales', value: `💬 ${textChannels} | 🔊 ${voiceChannels}` },
+      { name: 'Roles', value: String(guild.roles.cache.size) },
+      { name: 'Nivel de boost', value: String(guild.premiumTier) },
+      { name: 'Creado', value: guild.createdAt.toLocaleDateString() }
+    ]);
+
+  await message.channel.send({ embeds: [embed] });
+}
+
+async function handlePing(message) {
+  const sent = await message.channel.send('🏓 Pong...');
+
+  const latency = sent.createdTimestamp - message.createdTimestamp;
+  const api = Math.round(message.client.ws.ping);
+
+  await sent.edit(`🏓 Pong! Latencia: **${latency}ms** | API: **${api}ms**`);
+}
+
+async function handlePoll(message, rest) {
+  const text = rest.trim();
+
+  if (!text) return message.reply('❌ Uso: `!!poll <pregunta>`');
+
+  const embed = new EmbedBuilder()
+    .setTitle('📊 Encuesta')
+    .setDescription(text)
+    .setColor(0x3498db)
+    .setFooter({ text: `Por ${message.author.tag}` })
+    .setTimestamp();
+
+  const sent = await message.channel.send({ embeds: [embed] });
+
+  await sent.react('✅');
+  await sent.react('❌');
+
+  await message.delete().catch(() => {});
+}
+
+async function handleSay(message, rest) {
+  const text = rest.trim();
+
+  if (!text) return message.reply('❌ Uso: `!!say <texto>`');
+
+  await message.channel.send(text);
+
+  await message.delete().catch(() => {});
+}
+
+const BALL_ANSWERS = [
+  'Sí.', 'No.', 'Tal vez.', 'Sin duda alguna.', 'No cuentes con ello.',
+  'Claro que sí.', 'Mejor no te lo digo.', 'Las señales dicen que sí.',
+  'Pregunta de nuevo más tarde.', 'Desde luego.', 'Definitivamente no.',
+  'No lo veo claro.'
+];
+
+async function handle8ball(message, rest) {
+  if (!rest.trim()) return message.reply('❌ Uso: `!!8ball <pregunta>`');
+
+  const answer = BALL_ANSWERS[Math.floor(Math.random() * BALL_ANSWERS.length)];
+
+  await message.reply(`🎱 ${answer}`);
+}
+
+async function handleDice(message, rest) {
+  let faces = parseInt(rest.trim(), 10) || 6;
+
+  faces = Math.max(2, Math.min(100, faces));
+
+  const result = Math.floor(Math.random() * faces) + 1;
+
+  await message.reply(`🎲 Sacaste un **${result}** (dado de ${faces} caras).`);
+}
+
+async function handleCoin(message) {
+  const result = Math.random() < 0.5 ? 'Cara' : 'Cruz';
+
+  await message.reply(`🪙 **${result}**`);
+}
+
+const SLAP_PHRASES = [
+  '{a} le dio una bofetada a {b}.',
+  '{a} lanzó una torta a {b}.',
+  '{a} tiró a {b} al lago. 🏊',
+  '{a} le pegó con una almohada a {b}.'
+];
+
+async function handleSlap(message, rest) {
+  const targetId = parseUserId(rest);
+
+  if (!targetId) return message.reply('❌ Uso: `!!slap <@usuario>`');
+
+  const member = await getGuildMember(message.guild, targetId);
+
+  if (!member) return message.reply('❌ No pude encontrar a ese usuario.');
+
+  const phrase = SLAP_PHRASES[Math.floor(Math.random() * SLAP_PHRASES.length)]
+    .replace(/\{a\}/g, message.member.toString())
+    .replace(/\{b\}/g, member.toString());
+
+  await message.channel.send(phrase);
+}
+
+async function handleMute(message, rest) {
+  const [rawTarget, rawDuration, ...reasonParts] = rest.split(/\s+/);
+  const targetId = parseUserId(rawTarget);
+
+  if (!targetId) {
+    return message.reply('❌ Uso: `!!mute <@usuario> [duración] [razón]`. Ej: `!!mute @usuario 1h`');
+  }
+
+  const duration = rawDuration || '1h';
+  const reason = reasonParts.join(' ') || 'Sin razón especificada';
+  const ms = parseDuration(duration);
+
+  if (!ms) {
+    return message.reply(`❌ Duración no válida: \`${duration}\`. Usa valores como \`1m\`, \`1h\`, \`1d\`.`);
+  }
+
+  const member = await getGuildMember(message.guild, targetId);
+
+  if (!member) return message.reply(`❌ No pude encontrar a \`${targetId}\` en este servidor.`);
+
+  if (!(await ensureMsgTarget(message, targetId, 'el mute', member))) return;
+
+  try {
+    await member.timeout(ms, reason);
+    await message.channel.send(`🔇 **${member.user.tag}** fue muteado por ${duration}.\n**Motivo:** ${reason}`);
+
+    await logModAction(
+      message.guild,
+      message.author,
+      '🔇 Mute',
+      `**Usuario:** ${member}\n**Duración:** ${duration}\n**Motivo:** ${reason}`
+    );
+  } catch (error) {
+    console.error(error);
+    await message.reply('❌ No pude mutear al usuario. ¿Tengo permisos de **Moderar miembros**?');
+  }
+}
+
+async function handleUnmute(message, rest) {
+  const targetId = parseUserId(rest);
+
+  if (!targetId) return message.reply('❌ Uso: `!!unmute <@usuario>`');
+
+  const member = await getGuildMember(message.guild, targetId);
+
+  if (!member) return message.reply(`❌ No pude encontrar a \`${targetId}\` en este servidor.`);
+
+  try {
+    await member.timeout(null);
+    await message.channel.send(`🔊 **${member.user.tag}** fue desmuteado.`);
+
+    await logModAction(
+      message.guild,
+      message.author,
+      '🔊 Unmute',
+      `**Usuario:** ${member}`
+    );
+  } catch (error) {
+    console.error(error);
+    await message.reply('❌ No pude desmutear al usuario. ¿Tengo permisos de **Moderar miembros**?');
+  }
+}
+
+async function handleVc(message, rest) {
+  const [rawTarget, rawChannel, ...extra] = rest.split(/\s+/);
+  const targetId = parseUserId(rawTarget);
+
+  if (!targetId || !rawChannel || extra.length > 0) {
+    return message.reply('❌ Uso: `!!vc <@usuario> <#canal o id>`');
+  }
+
+  const channelId = rawChannel.replace(/[<#>]/g, '');
+  const channel = message.guild.channels.cache.get(channelId)
+    || message.guild.channels.cache.find(ch => ch.name === rawChannel && ch.type === ChannelType.GuildVoice);
+
+  if (!channel || channel.type !== ChannelType.GuildVoice) {
+    return message.reply('❌ No encontré ese canal de voz.');
+  }
+
+  const member = await getGuildMember(message.guild, targetId);
+
+  if (!member) return message.reply(`❌ No pude encontrar a \`${targetId}\` en este servidor.`);
+
+  try {
+    await member.voice.setChannel(channel.id);
+    await message.channel.send(`🔁 **${member.user.tag}** fue movido a **${channel.name}**.`);
+  } catch (error) {
+    console.error(error);
+    await message.reply('❌ No pude mover al usuario. ¿Está en un canal de voz?');
+  }
+}
+
+async function handleDespedida(message, rest) {
+  const text = rest.trim();
+
+  if (!text) {
+    return message.reply(
+      '❌ Uso: `!!despedida <mensaje>`\n' +
+      'Marcadores: `{user}` (mención), `{username}` (nombre), `{server}` (servidor).\n' +
+      `Mensaje actual: ${leaveMessageOverride || LEAVE_MESSAGE}`
+    );
+  }
+
+  leaveMessageOverride = text;
+
+  await message.channel.send('✅ Mensaje de despedida configurado.');
+
+  await logModAction(
+    message.guild,
+    message.author,
+    '👋 Despedida configurada',
+    `**Mensaje:** ${shortenText(text, 1024)}`
+  );
+}
+
+async function triggerRaidMode(guild) {
+  raidModeGuilds.add(guild.id);
+
+  await guild.setVerificationLevel(GuildVerificationLevel.High).catch(console.error);
+
+  for (const channel of guild.channels.cache.values()) {
+    if (channel.isTextBased()) {
+      await channel.permissionOverwrites
+        .edit(guild.roles.everyone, { SendMessages: false })
+        .catch(() => {});
+    }
+  }
+
+  await logModAction(
+    guild,
+    guild.client.user,
+    '🚨 Anti-raid activado',
+    `Se detectaron muchas entradas en poco tiempo (${RAID_JOIN_THRESHOLD}+ en ${RAID_JOIN_WINDOW_MS / 1000}s).\n` +
+    'Verificación en **Alta** y canales bloqueados. Usa `!!antiraid off` para desactivar.'
+  );
+
+  setTimeout(() => raidModeGuilds.delete(guild.id), RAID_COOLDOWN_MS);
+}
+
+async function handleAntiRaid(message, rest) {
+  const arg = rest.trim().toLowerCase();
+
+  if (arg === 'off') {
+    raidModeGuilds.delete(message.guild.id);
+    raidJoins.delete(message.guild.id);
+
+    await message.guild.setVerificationLevel(GuildVerificationLevel.None).catch(() => {});
+
+    for (const channel of message.guild.channels.cache.values()) {
+      if (channel.isTextBased()) {
+        await channel.permissionOverwrites
+          .edit(message.guild.roles.everyone, { SendMessages: true })
+          .catch(() => {});
+      }
+    }
+
+    await message.channel.send('✅ Anti-raid desactivado y canales restaurados.');
+
+    await logModAction(message.guild, message.author, '✅ Anti-raid desactivado', '');
+
+    return;
+  }
+
+  await message.channel.send(
+    raidModeGuilds.has(message.guild.id)
+      ? '🚨 Anti-raid **activo**. Usa `!!antiraid off` para desactivarlo.'
+      : `🛡️ Anti-raid **inactivo**. Umbral: ${RAID_JOIN_THRESHOLD} entradas en ${RAID_JOIN_WINDOW_MS / 1000}s.`
+  );
+}
+
 client.once('clientReady', () => {
   console.log(`✅ Conectado como ${client.user.tag}`);
 });
@@ -1161,7 +1513,7 @@ client.on('messageCreate', async message => {
 
     if (!content.startsWith('!!')) return;
 
-    const commandMatch = /^!!(emoji|sticker|erasechat|ban|kick|timeout|unban|warn|warns|delwarn|purgeusuario|slowmode|lock|unlock|announce)\b/i.exec(content);
+    const commandMatch = /^!!(emoji|sticker|erasechat|ban|kick|timeout|unban|warn|warns|delwarn|purgeusuario|slowmode|lock|unlock|announce|avatar|userinfo|serverinfo|ping|poll|say|8ball|dado|moneda|slap|mute|unmute|vc|antiraid|despedida)\b/i.exec(content);
 
     if (!commandMatch) return;
 
@@ -1246,6 +1598,81 @@ client.on('messageCreate', async message => {
 
     if (commandName === 'timeout') {
       await handleMsgTimeout(message, rest);
+      return;
+    }
+
+    if (commandName === 'avatar') {
+      await handleAvatar(message, rest);
+      return;
+    }
+
+    if (commandName === 'userinfo') {
+      await handleUserinfo(message, rest);
+      return;
+    }
+
+    if (commandName === 'serverinfo') {
+      await handleServerinfo(message);
+      return;
+    }
+
+    if (commandName === 'ping') {
+      await handlePing(message);
+      return;
+    }
+
+    if (commandName === 'poll') {
+      await handlePoll(message, rest);
+      return;
+    }
+
+    if (commandName === 'say') {
+      await handleSay(message, rest);
+      return;
+    }
+
+    if (commandName === '8ball') {
+      await handle8ball(message, rest);
+      return;
+    }
+
+    if (commandName === 'dado') {
+      await handleDice(message, rest);
+      return;
+    }
+
+    if (commandName === 'moneda') {
+      await handleCoin(message);
+      return;
+    }
+
+    if (commandName === 'slap') {
+      await handleSlap(message, rest);
+      return;
+    }
+
+    if (commandName === 'mute') {
+      await handleMute(message, rest);
+      return;
+    }
+
+    if (commandName === 'unmute') {
+      await handleUnmute(message, rest);
+      return;
+    }
+
+    if (commandName === 'vc') {
+      await handleVc(message, rest);
+      return;
+    }
+
+    if (commandName === 'antiraid') {
+      await handleAntiRaid(message, rest);
+      return;
+    }
+
+    if (commandName === 'despedida') {
+      await handleDespedida(message, rest);
       return;
     }
 
@@ -1388,6 +1815,55 @@ client.on('interactionCreate', async interaction => {
         ephemeral: true
       }).catch(() => {});
     }
+  }
+});
+
+client.on('guildMemberAdd', async member => {
+  try {
+    const guildId = member.guild.id;
+
+    if (raidModeGuilds.has(guildId)) {
+      await member.timeout(RAID_COOLDOWN_MS, 'Anti-raid activo').catch(() => {});
+      return;
+    }
+
+    const now = Date.now();
+    const joins = raidJoins.get(guildId) || [];
+
+    joins.push(now);
+
+    const recent = joins.filter(timestamp => now - timestamp <= RAID_JOIN_WINDOW_MS);
+
+    raidJoins.set(guildId, recent);
+
+    if (recent.length >= RAID_JOIN_THRESHOLD) {
+      await triggerRaidMode(member.guild);
+    }
+  } catch (error) {
+    console.error('Error en anti-raid:', error);
+  }
+});
+
+client.on('guildMemberRemove', async member => {
+  try {
+    const channelId = LEAVE_CHANNEL_ID || member.guild.systemChannelId;
+
+    if (!channelId) return;
+
+    const channel = await client.channels.fetch(channelId).catch(() => null);
+
+    if (!channel) return;
+
+    const template = leaveMessageOverride || LEAVE_MESSAGE;
+
+    const text = template
+      .replace(/\{user\}/g, `${member.user}`)
+      .replace(/\{username\}/g, member.user.tag)
+      .replace(/\{server\}/g, member.guild.name);
+
+    await channel.send(text).catch(console.error);
+  } catch (error) {
+    console.error('Error en despedida:', error);
   }
 });
 
