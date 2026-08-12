@@ -70,6 +70,8 @@ const WEAK_SCAM_KEYWORDS = [
 
 const imagePosts = new Map();
 const seenUsers = new Map();
+const warnings = new Map();
+const WARN_TIMEOUT_THRESHOLD = 3;
 let warnedEmptyContent = false;
 
 const commands = [
@@ -780,6 +782,13 @@ async function handleBan(interaction) {
   try {
     await interaction.guild.members.ban(target.id, { reason });
     await interaction.editReply(`✅ **${target.tag}** fue baneado.\n**Motivo:** ${reason}`);
+
+    await logModAction(
+      interaction.guild,
+      interaction.user,
+      '🚫 Baneo',
+      `**Usuario:** <@${target.id}> (${target.tag})\n**Motivo:** ${reason}`
+    );
   } catch (error) {
     console.error(error);
     await interaction.editReply('❌ No pude banear al usuario. ¿Tengo permisos de **Banear miembros**?');
@@ -807,6 +816,13 @@ async function handleKick(interaction) {
   try {
     await member.kick(reason);
     await interaction.editReply(`✅ **${target.tag}** fue expulsado.\n**Motivo:** ${reason}`);
+
+    await logModAction(
+      interaction.guild,
+      interaction.user,
+      '🥾 Expulsión',
+      `**Usuario:** <@${target.id}> (${target.tag})\n**Motivo:** ${reason}`
+    );
   } catch (error) {
     console.error(error);
     await interaction.editReply('❌ No pude expulsar al usuario. ¿Tengo permisos de **Expulsar miembros**?');
@@ -843,6 +859,13 @@ async function handleTimeout(interaction) {
   try {
     await member.timeout(ms, reason);
     await interaction.editReply(`✅ **${target.tag}** recibió un timeout de ${duration}.\n**Motivo:** ${reason}`);
+
+    await logModAction(
+      interaction.guild,
+      interaction.user,
+      '🔇 Timeout',
+      `**Usuario:** <@${target.id}> (${target.tag})\n**Duración:** ${duration}\n**Motivo:** ${reason}`
+    );
   } catch (error) {
     console.error(error);
     await interaction.editReply('❌ No pude aplicar el timeout. ¿Tengo permisos de **Moderar miembros**?');
@@ -890,6 +913,318 @@ async function handleEraseChat(message, count) {
   await message.channel
     .send(`✅ ${deleted} mensaje(s) eliminado(s).`)
     .catch(() => {});
+
+  await logModAction(
+    message.guild,
+    message.author,
+    '🧹 Limpieza de chat',
+    `**Canal:** ${message.channel}\n**Mensajes eliminados:** ${deleted}`
+  );
+}
+
+async function logModAction(guild, actor, title, description) {
+  const channel = MODLOG_CHANNEL_ID
+    ? await client.channels.fetch(MODLOG_CHANNEL_ID).catch(() => null)
+    : null;
+
+  if (!channel) return;
+
+  const embed = new EmbedBuilder()
+    .setTitle(title)
+    .setColor(0x3498db)
+    .setDescription(`${description}\n**Admin:** ${actor}`)
+    .setTimestamp();
+
+  await channel.send({ embeds: [embed] }).catch(console.error);
+}
+
+function parseUserId(input) {
+  const trimmed = (input || '').trim();
+  const match = /^(?:<@!?)?(\d{17,20})>?$/.exec(trimmed);
+
+  return match ? match[1] : null;
+}
+
+function getWarns(guildId, userId) {
+  return warnings.get(`${guildId}:${userId}`) || [];
+}
+
+function addWarn(guildId, userId, reason, by) {
+  const key = `${guildId}:${userId}`;
+  const list = getWarns(guildId, userId);
+
+  list.push({ reason, by, at: new Date() });
+  warnings.set(key, list);
+
+  return list;
+}
+
+function clearWarns(guildId, userId) {
+  warnings.delete(`${guildId}:${userId}`);
+}
+
+async function handleUnban(message, rest) {
+  const [rawId, ...reasonParts] = rest.split(/\s+/);
+  const userId = parseUserId(rawId);
+
+  if (!userId) {
+    return message.reply('❌ Uso: `!!unban <id_usuario> [razón]`');
+  }
+
+  const reason = reasonParts.join(' ') || 'No especificada';
+
+  try {
+    await message.guild.bans.remove(userId, reason);
+
+    await message.channel.send(`✅ Usuario \`${userId}\` desbaneado.`);
+
+    await logModAction(
+      message.guild,
+      message.author,
+      '🔓 Desbaneo',
+      `**Usuario:** \`${userId}\`\n**Motivo:** ${reason}`
+    );
+  } catch (error) {
+    console.error(error);
+    await message.reply(
+      `❌ No pude desbanear a \`${userId}\`. ¿Está baneado? ¿Tengo permiso de **Banear miembros**?`
+    );
+  }
+}
+
+async function handleWarn(message, rest) {
+  const [rawTarget, ...reasonParts] = rest.split(/\s+/);
+  const targetId = parseUserId(rawTarget);
+
+  if (!targetId) {
+    return message.reply('❌ Uso: `!!warn <@usuario> [razón]`');
+  }
+
+  const reason = reasonParts.join(' ') || 'No especificada';
+  const member = await getGuildMember(message.guild, targetId);
+
+  if (!member) {
+    return message.reply(`❌ No pude encontrar a \`${targetId}\` en este servidor.`);
+  }
+
+  if (targetId === message.author.id) {
+    return message.reply('❌ No puedes advertirte a ti mismo.');
+  }
+
+  if (targetId === client.user.id) {
+    return message.reply('❌ No puedes advertirme a mí.');
+  }
+
+  if (isAdmin(member)) {
+    return message.reply('❌ No puedes advertir a un administrador.');
+  }
+
+  const warns = addWarn(message.guild.id, targetId, reason, message.author.tag);
+
+  let response = `⚠️ **${member.user.tag}** recibió una advertencia (**${warns.length}** en total).\n**Motivo:** ${reason}`;
+
+  if (warns.length >= WARN_TIMEOUT_THRESHOLD) {
+    try {
+      await member.timeout(60 * 60 * 1000, `${WARN_TIMEOUT_THRESHOLD} advertencias acumuladas`);
+      clearWarns(message.guild.id, targetId);
+      response += `\n🔇 **${member.user.tag}** superó ${WARN_TIMEOUT_THRESHOLD} advertencias y fue silenciado 1 hora.`;
+    } catch (error) {
+      console.error(error);
+    }
+  }
+
+  await message.channel.send(response);
+
+  await logModAction(
+    message.guild,
+    message.author,
+    '⚠️ Advertencia',
+    `**Usuario:** ${member}\n**Total:** ${warns.length}\n**Motivo:** ${reason}`
+  );
+}
+
+async function handleWarns(message, rest) {
+  const targetId = parseUserId(rest);
+
+  if (!targetId) {
+    return message.reply('❌ Uso: `!!warns <@usuario>`');
+  }
+
+  const warns = getWarns(message.guild.id, targetId);
+  const member = await getGuildMember(message.guild, targetId);
+  const name = member?.user.tag || targetId;
+
+  if (warns.length === 0) {
+    return message.reply(`✅ **${name}** no tiene advertencias.`);
+  }
+
+  const lines = warns.map((w, i) =>
+    `${i + 1}. ${w.reason} — ${w.at.toLocaleString()} (por ${w.by})`
+  );
+
+  await message.reply(`**Advertencias de ${name}:**\n${lines.join('\n')}`);
+}
+
+async function handleDelWarn(message, rest) {
+  const targetId = parseUserId(rest);
+
+  if (!targetId) {
+    return message.reply('❌ Uso: `!!delwarn <@usuario>`');
+  }
+
+  clearWarns(message.guild.id, targetId);
+
+  await message.reply(`✅ Se eliminaron las advertencias de \`${targetId}\`.`);
+
+  await logModAction(
+    message.guild,
+    message.author,
+    '🧾 Advertencias limpiadas',
+    `**Usuario:** \`${targetId}\``
+  );
+}
+
+async function handlePurgeUser(message, rest) {
+  const [rawCount, rawTarget, ...extra] = rest.split(/\s+/);
+  const count = parseInt(rawCount, 10);
+  const targetId = parseUserId(rawTarget);
+
+  if (!count || count < 1 || count > 1000 || !targetId || extra.length > 0) {
+    return message.reply(
+      '❌ Uso: `!!purgeusuario <cantidad> <@usuario>`. La cantidad va de 1 a 1000.'
+    );
+  }
+
+  if (!message.channel.permissionsFor(message.guild.members.me)?.has(PermissionFlagsBits.ManageMessages)) {
+    return message.reply('❌ Necesito el permiso de **Gestionar mensajes** para borrar.');
+  }
+
+  const member = await getGuildMember(message.guild, targetId);
+  const name = member?.user.tag || targetId;
+
+  let deleted = 0;
+  let remaining = count;
+  let before;
+
+  while (remaining > 0) {
+    const options = { limit: 100 };
+
+    if (before) options.before = before;
+
+    const batch = await message.channel.messages.fetch(options).catch(() => null);
+
+    if (!batch || batch.size === 0) break;
+
+    const matches = [...batch.values()]
+      .filter(msg => msg.author.id === targetId)
+      .slice(0, remaining);
+
+    if (matches.length === 0) {
+      if (batch.size < 100) break;
+      before = batch.last().id;
+      continue;
+    }
+
+    for (let i = 0; i < matches.length;) {
+      const chunk = matches.slice(i, i + 100);
+
+      if (chunk.length >= 2) {
+        await message.channel.bulkDelete(chunk).catch(console.error);
+      } else {
+        await chunk[0].delete().catch(console.error);
+      }
+
+      deleted += chunk.length;
+      remaining -= chunk.length;
+      i += chunk.length;
+    }
+
+    if (batch.size < 100) break;
+    before = batch.last().id;
+  }
+
+  await message.channel.send(`✅ Se eliminaron **${deleted}** mensaje(s) de **${name}**.`);
+
+  await logModAction(
+    message.guild,
+    message.author,
+    '🗑️ Purga de usuario',
+    `**Usuario:** ${member || `\`${targetId}\``}\n**Mensajes eliminados:** ${deleted}`
+  );
+}
+
+async function handleSlowmode(message, rest) {
+  const count = parseInt(rest, 10);
+
+  if (isNaN(count)) {
+    return message.reply('❌ Uso: `!!slowmode <segundos>` (0 para desactivar). Máximo 21600.');
+  }
+
+  const seconds = Math.max(0, Math.min(21600, count));
+
+  try {
+    await message.channel.setRateLimitPerUser(seconds);
+
+    await message.channel.send(
+      seconds === 0
+        ? '✅ Modo lento desactivado.'
+        : `✅ Modo lento configurado a **${seconds} segundos**.`
+    );
+
+    await logModAction(
+      message.guild,
+      message.author,
+      '🐢 Modo lento',
+      `**Canal:** ${message.channel}\n**Segundos:** ${seconds}`
+    );
+  } catch (error) {
+    console.error(error);
+    await message.reply('❌ No pude cambiar el modo lento. ¿Tengo permiso de **Gestionar canales**?');
+  }
+}
+
+async function handleLockState(message, locked) {
+  try {
+    await message.channel.permissionOverwrites.edit(message.guild.roles.everyone, {
+      SendMessages: !locked
+    });
+
+    await message.channel.send(locked ? '🔒 Canal bloqueado.' : '🔓 Canal desbloqueado.');
+
+    await logModAction(
+      message.guild,
+      message.author,
+      locked ? '🔒 Canal bloqueado' : '🔓 Canal desbloqueado',
+      `**Canal:** ${message.channel}`
+    );
+  } catch (error) {
+    console.error(error);
+    await message.reply('❌ No pude modificar el canal. ¿Tengo permiso de **Gestionar canales**?');
+  }
+}
+
+async function handleAnnounce(message, rest) {
+  const text = rest.trim();
+
+  if (!text) {
+    return message.reply('❌ Uso: `!!announce <texto>`');
+  }
+
+  const embed = new EmbedBuilder()
+    .setTitle('📢 Anuncio')
+    .setDescription(text)
+    .setColor(0x9b59b6)
+    .setFooter({ text: `Por ${message.author.tag}` })
+    .setTimestamp();
+
+  await message.channel.send({ embeds: [embed] });
+
+  await logModAction(
+    message.guild,
+    message.author,
+    '📢 Anuncio',
+    `**Canal:** ${message.channel}\n**Texto:** ${shortenText(text, 1024)}`
+  );
 }
 
 client.once('clientReady', () => {
@@ -916,7 +1251,7 @@ client.on('messageCreate', async message => {
 
     if (!content.startsWith('!!')) return;
 
-    const commandMatch = /^!!(emoji|sticker|erasechat)\b/i.exec(content);
+    const commandMatch = /^!!(emoji|sticker|erasechat|unban|warn|warns|delwarn|purgeusuario|slowmode|lock|unlock|announce)\b/i.exec(content);
 
     if (!commandMatch) return;
 
@@ -943,6 +1278,53 @@ client.on('messageCreate', async message => {
       await handleEraseChat(message, parseInt(countMatch[1], 10));
       return;
     }
+
+    if (commandName === 'unban') {
+      await handleUnban(message, rest);
+      return;
+    }
+
+    if (commandName === 'warn') {
+      await handleWarn(message, rest);
+      return;
+    }
+
+    if (commandName === 'warns') {
+      await handleWarns(message, rest);
+      return;
+    }
+
+    if (commandName === 'delwarn') {
+      await handleDelWarn(message, rest);
+      return;
+    }
+
+    if (commandName === 'purgeusuario') {
+      await handlePurgeUser(message, rest);
+      return;
+    }
+
+    if (commandName === 'slowmode') {
+      await handleSlowmode(message, rest);
+      return;
+    }
+
+    if (commandName === 'lock') {
+      await handleLockState(message, true);
+      return;
+    }
+
+    if (commandName === 'unlock') {
+      await handleLockState(message, false);
+      return;
+    }
+
+    if (commandName === 'announce') {
+      await handleAnnounce(message, rest);
+      return;
+    }
+
+    if (commandName !== 'emoji' && commandName !== 'sticker') return;
 
     let messageId = null;
 
