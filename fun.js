@@ -198,20 +198,73 @@ async function squarePhoto(buffer, size) {
   }
 }
 
-async function blurredBackground(url, width, height) {
+function averageColor(pixels) {
+  let r = 0;
+  let g = 0;
+  let b = 0;
+
+  for (const p of pixels) {
+    r += p[0];
+    g += p[1];
+    b += p[2];
+  }
+
+  const n = pixels.length || 1;
+
+  return { r: r / n, g: g / n, b: b / n };
+}
+
+function colorToHex(c) {
+  return '#' + [c.r, c.g, c.b].map(v => Math.round(v).toString(16).padStart(2, '0')).join('');
+}
+
+function colorLuminance(c) {
+  return (0.299 * c.r + 0.587 * c.g + 0.114 * c.b) / 255;
+}
+
+async function avatarBorderColors(url) {
   const buffer = await downloadBuffer(url);
 
   if (!buffer) return null;
 
   try {
-    const output = await sharp(buffer)
-      .resize(width, height, { fit: 'cover' })
-      .blur(24)
-      .modulate({ brightness: 1.15, saturation: 1.1 })
-      .png()
-      .toBuffer();
+    const SIZE = 32;
+    const { data, info } = await sharp(buffer)
+      .resize(SIZE, SIZE, { fit: 'cover' })
+      .removeAlpha()
+      .raw()
+      .toBuffer({ resolveWithObject: true });
 
-    return output.toString('base64');
+    const channels = info.channels;
+    const px = (x, y) => {
+      const i = (y * SIZE + x) * channels;
+      return [data[i], data[i + 1], data[i + 2]];
+    };
+
+    const ring = [];
+    const top = [];
+    const bottom = [];
+
+    for (let y = 0; y < SIZE; y++) {
+      for (let x = 0; x < SIZE; x++) {
+        if (x === 0 || y === 0 || x === SIZE - 1 || y === SIZE - 1) {
+          ring.push(px(x, y));
+        }
+
+        if (y < 2) top.push(px(x, y));
+        if (y >= SIZE - 2) bottom.push(px(x, y));
+      }
+    }
+
+    const mid = averageColor(ring);
+    const topColor = averageColor(top);
+    const bottomColor = averageColor(bottom);
+
+    return {
+      top: colorToHex(topColor),
+      bottom: colorToHex(bottomColor),
+      textDark: colorLuminance(mid) > 0.55
+    };
   } catch {
     return null;
   }
@@ -238,18 +291,25 @@ async function createQuoteImage(content, authorName, avatarUrl) {
   const HEIGHT = avatarY + AVATAR_SIZE + PADDING;
 
   const avatar = await circularAvatar(avatarUrl, AVATAR_SIZE, authorName);
-  const background = await blurredBackground(avatarUrl, WIDTH, HEIGHT);
+  const colors = await avatarBorderColors(avatarUrl);
+
+  const textColor = colors ? (colors.textDark ? '#222222' : '#ffffff') : '#222222';
+  const attributionColor = colors ? (colors.textDark ? '#555555' : '#e8e8e8') : '#777777';
+
+  const background = colors
+    ? '<linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">' +
+      '<stop offset="0" stop-color="' + colors.top + '"/>' +
+      '<stop offset="1" stop-color="' + colors.bottom + '"/>' +
+      '</linearGradient>' +
+      '<rect width="' + WIDTH + '" height="' + HEIGHT + '" fill="url(#bg)" rx="16"/>'
+    : '<rect width="' + WIDTH + '" height="' + HEIGHT + '" fill="#ffffff" rx="16"/>';
 
   const svg = svgDoc(WIDTH, HEIGHT,
-    (background
-      ? '<image x="0" y="0" width="' + WIDTH + '" height="' + HEIGHT + '" xlink:href="data:image/png;base64,' + background + '"/>'
-      : '<rect width="' + WIDTH + '" height="' + HEIGHT + '" fill="#ffffff"/>') +
-    '<rect width="' + WIDTH + '" height="' + HEIGHT + '" fill="#ffffff" opacity="0.6"/>' +
-    '<rect x="14" y="14" width="' + (WIDTH - 28) + '" height="' + (HEIGHT - 28) + '" fill="none" stroke="#ffffff" stroke-width="2" opacity="0.85" rx="12"/>' +
-    textBlock(lines, PADDING, quoteStart, FONT_SIZE, LINE_HEIGHT, '#1f1f1f', 'Playfair Display', 'normal', 'italic') +
-    '<text x="' + PADDING + '" y="' + attributionY + '" font-family="Playfair Display" font-size="26" fill="#3a3a3a">-' + escapeXml(authorName) + '</text>' +
+    background +
+    textBlock(lines, PADDING, quoteStart, FONT_SIZE, LINE_HEIGHT, textColor, 'Georgia, serif', 'normal', 'italic') +
+    '<text x="' + PADDING + '" y="' + attributionY + '" font-family="Arial, sans-serif" font-size="26" fill="' + attributionColor + '">-' + escapeXml(authorName) + '</text>' +
     '<image x="' + PADDING + '" y="' + avatarY + '" width="' + AVATAR_SIZE + '" height="' + AVATAR_SIZE + '" xlink:href="data:image/png;base64,' + avatar + '"/>'
-  , true);
+  );
 
   return sharp(Buffer.from(svg)).png().toBuffer();
 }
@@ -318,23 +378,56 @@ async function createPolaroidImage(photo, caption) {
 }
 
 const WANTED_FOOTERS = [
-  ['WANTED: Por violar cadáveres. Decía que "al menos no se quejaban".', 'SE BUSCA: Por vender heroína cortada con cenizas de su madre. "Ella hubiera querido que la consuman".', 'RECOMPENSA: $50,000. Vivo para interrogarlo. Muerto para alimentar a los cerdos.'],
-  ['WANTED: Por enterrar a sus hijos vivos. Dijo que "necesitaban madurar bajo tierra".', 'SE BUSCA: Por hacer abortos con una escopeta. Eficiente pero desordenado.', 'RECOMPENSA: Por su lengua. Arrancada. Ya ha dicho suficiente.'],
-  ['WANTED: Por canibalismo. Dijo que "quería sentirse dentro de alguien de verdad".', 'SE BUSCA: Por vender órganos de niños. "Casi nuevos, poco uso".', 'RECOMPENSA: $100,000 o lo equivalente en partes de su cuerpo en el mercado negro.'],
-  ['WANTED: Por violar a su abuela enferma. Ella no se enteró, pero Dios sí.', 'SE BUSCA: Por hacer snuff films caseros. Calidad amateur, contenido profesional.', 'RECOMPENSA: Mortal. Como su última víctima, pero más lento.'],
-  ['WANTED: Por necrofilia y zoofilia. A veces combinadas. "Necesito ayuda", dijo nadie.', 'SE BUSCA: Por vender bebés a traficantes. "Envío gratis, devoluciones no aceptadas".', 'RECOMPENSA: Su cabeza en una pica. Decorativo y ejemplarizante.'],
-  ['WANTED: Por torturar gatos hasta la muerte. Ahora busca compañía humana.', 'SE BUSCA: Por incesto forzado. "La familia que viola unida, permanece unida".', 'RECOMPENSA: $5,000 por cada dedo. Traigan la caja completa.'],
-  ['WANTED: Por prostituir a su hija discapacitada. Dijo que "al menos trabaja desde casa".', 'SE BUSCA: Por hacer experimentos médicos en vagabundos. Resultados: 100% letales.', 'RECOMPENSA: Su piel. Viva. Para el sótano del sheriff.'],
-  ['WANTED: Por pederastia. Prefiere muertos porque "no crecen para contarlo".', 'SE BUSCA: Por tráfico de órganos de fetos. "Material de construcción barato".', 'RECOMPENSA: Lo suficiente para pagar el tratamiento de quienes lo encuentren primero.'],
-  ['WANTED: Por violar cadáveres de niños. Nivel de enfermo: insondable.', 'SE BUSCA: Por hacer bollos con carne humana. "Receta secreta de la abuela".', 'RECOMPENSA: Su corazón. Todavía latiendo, preferiblemente.'],
-  ['WANTED: Por secuestrar bebés para venderlos a pedófilos. Cadena de suministro completa.', 'SE BUSCA: Por filmar snuff de indigentes. "Arte callejero", lo llamaba.', 'RECOMPENSA: $200,000. O su cabeza. El dinero es más fácil de gastar.'],
-  ['WANTED: Por castración forzada con herramientas de jardín. "Podando la sociedad".', 'SE BUSCA: Por vender videos de tortura animal como pornografía. Clientela selecta.', 'RECOMPENSA: Su sangre. Cinco litros, en botellas, para análisis forense.'],
-  ['WANTED: Por abusar de su hija post-mortem. "Hasta que la muerte nos separe" fue sugerencia.', 'SE BUSCA: Por tráfico de niños para sacrificios rituales. "Pedidos especiales para satanás".', 'RECOMPENSA: Eternidad en el infierno. Y $10,000 de este lado.'],
-  ['WANTED: Por hacer abortos clandestinos con un gancho de carne. Sin anestesia, sin luz.', 'SE BUSCA: Por canibalismo infantil. "La carne más tierna", según su diario.', 'RECOMPENSA: Sus ojos. Para que deje de mirar así.'],
-  ['WANTED: Por violación sistemática de cadáveres en el depósito del pueblo. Turno nocturno.', 'SE BUSCA: Por vender fetos encurtidos como "delicatessen". Sabor a amniótico.', 'RECOMPENSA: Su columna vertebral. Para hacer una flauta o algo peor.'],
-  ['WANTED: Por incesto con gemelos siameses. "Dos por uno", decía el muy hijo de puta.', 'SE BUSCA: Por experimentar con ácido en vagabundos. Caras borradas, identidades también.', 'RECOMPENSA: Su piel desollada. Para tapizar algo bonito.'],
-  ['WANTED: Por pornografía infantil extrema. Coleccionista de almas rotas.', 'SE BUSCA: Por asesinar prostitutas y hacer collares con sus dientes. "Joyería íntima".', 'RECOMPENSA: Su lengua bifurcada. Para que hable con la serpiente que lleva dentro.'],
-  ['WANTED: Por violar a su madre senil. "Ella no recordaba, yo no olvidaba".', 'SE BUSCA: Por tráfico de bebés congelados. "Entrega a domicilio, conservar a -18°C".']
+  'Por violar a su hija discapacitada hasta dejarla vegetal. Dijo que "así no cuenta como testigo, y el brócoli tampoco habla".',
+  'Por vender videos de snuff infantil donde él mismo protagoniza el final. "Autocrítica extrema", según su agente.',
+  'Por hacer un collar con los prepucios de sus víctimas. "Colección completa", dice. "Falta la hebilla", dice su terapeuta.',
+  'Por enterrar a su esposa viva con su amante muerto. "Que se entretengan juntos". Economía doméstica.',
+  'Por canibalismo de fetos. Los compraba, los cocinaba, los fotografiaba para su blog. "Cero waste, todo sostenible".',
+  'Por castrar a vagabundos con una cuchara oxidada. Colección de 23 escrotos en formol. "Mi bolsa de pelotas", la llama.',
+  'Por violar el cuerpo de su madre durante tres días después del infarto. "Último abrazo. Ella no se quejó, cosa rara en ella".',
+  'Por traficar niños para granjas de órganos. "Pedidos por piezas o al peso. Envío gratis en compras mayores a un hígado".',
+  'Por hacer experimentos de eutanasia forzada en ancianos del asilo. "Investigación privada. Resultados: la muerte sí es el final".',
+  'Por vender agua bendita mezclada con semen de enfermos terminales. "Bendición contagiosa. Dos en uno: fe y fiebre".',
+  'Por torturar a su hijo hasta que se cagaba encima, luego lo obligaba a comerlo. "Reciclaje familiar. Somos ecológicos".',
+  'Por filmar violaciones de cadáveres con música de caja de música de fondo. "Romántico hasta el final, aunque sea unilateral".',
+  'Por coser los labios de prostitutas mientras las violaba. "Silencio dorado. Clientes satisfechos, cero quejas formales".',
+  'Por mantener un sótano con gemelos siameses secuestrados desde 1998. "Mascotas humanas. Comen poco, ladran doble".',
+  'Por hacer sopa con fetos de aborto clandestino. "Caldo de vida", lo llamaba. "Sopa de letras", decían los clientes.',
+  'Por arrancarle los ojos a su esposa con un sacacorchos. "Para que no me viera con otras. Ahora ve todo borroso, problema resuelto".',
+  'Por vender piel humana curtida hecha lámparas. "Iluminación orgánica. Enciende la piel de tu ex".',
+  'Por violar a su abuela con demencia y grabarlo para su canal privado. "Contenido vintage. Ella no recordaba, yo no olvidaba, el algoritmo recomendaba".',
+  'Por traficar bebés recién nacidos a pedófilos con SIDA. "Entrega inmunológica. Regala enfermedades, recibe trauma".',
+  'Por hacer un traje de piel humana de mujeres embarazadas. "Doble capa. Abrigo de dos por uno, oferta imperdible".',
+  'Por enterrar a sus hijos hasta el cuello y orinarles encima. "Ducha dorada forzada. Aprenden hidráulica temprano".',
+  'Por vender videos de niños siendo descuartizados vivos. Contenido premium. "ASMR extremo", según los comentarios.',
+  'Por mantener un harem de cadáveres de suicidas en su congelador. "Compañía fría. No hablan, no juzgan, no se descomponen rápido".',
+  'Por arrancarle los dientes a su hijo con alicates. "Para que no hable mal de mí. Ahora escribe mejor, padre del año".',
+  'Por hacer abortos con un taladro y vender los restos a restaurantes chinos. "Fusión culinaria. De la clinica al plato en 30 minutos".',
+  'Por violar a su hermana menor hasta dejarla estéril y luego vender su matriz. "Emprendedor serial. Nada se desperdicia".',
+  'Por hacer una colección de cabezas de fetos en tarros de vidrio. "Bebés eternos. Decoración minimalista para el baño".',
+  'Por torturar animales hasta que mueren y luego violar sus cadáveres. "Segunda ronda. Amor incondicional, incluso post-mortem".',
+  'Por mantener secuestrada a su propia hija como esclava sexual durante 15 años. "Trabajo desde casa antes de que fuera mainstream".',
+  'Por vender riñones de niños de la calle. "Casi nuevos, un solo dueño. Garantía de fábrica, si tuvieran papeles".',
+  'Por hacer un traje de boda con piel de vírgenes violadas. "Blanco inmaculado. Hasta que se mancha con la realidad".',
+  'Por enterrar a su familia en el jardín y plantar rosas encima. "Abono familiar. Finalmente aportan algo al hogar".',
+  'Por filmar cómo desangra a vagabundos para hacer vino de sangre humana. "Cosecha propia. Terroir urbano, notas a hierro y desesperación".',
+  'Por violar cadáveres en el depósito del hospital y dejarlos llenos de semen podrido. "Donación anónima. Ellos no pueden rechazarla".',
+  'Por hacer una marioneta con huesos de su exesposa. "Ahora baila cuando yo digo. Relación mejorada, diría yo".',
+  'Por traficar niños discapacitados para peleas clandestinas hasta la muerte. "Inclusión forzada. Todos pelean, nadie gana".',
+  'Por arrancarle la lengua a su madre y cosérsela en el ano. "Boca abajo. Finalmente dice lo que pienso".',
+  'Por vender agujas infectadas con VIH a adictos. "Promoción de lealtad. Clientes de por vida, literalmente".',
+  'Por hacer un altar con partes íntimas de 40 mujeres. "Santuario de carne. Airbnb para almas perdidas".',
+  'Por violar a su hija mientras la obligaba a mirar fotos de su madre muerta. "Noche de padre e hija. Memoria familiar viva".',
+  'Por hacer jabón con grasa de cadáveres de indigentes. "Limpieza profunda. De la calle a tu piel, cero residuos".',
+  'Por mantener un criadero de niños para venderlos a productores de snuff. "Granja de talentos. Descubrimos estrellas, las matamos".',
+  'Por coser los ojos de su esposa mientras dormía. "Para que no me deje. Spoiler: se fue igual, pero a ciegas".',
+  'Por hacer una colección de fetos momificados que usa como muñecos sexuales. "Juguetes antiguos. Coleccionable, no juguete. Bueno, un poco sí".',
+  'Por traficar órganos de bebés recién nacidos a millonarios enfermos. "Piezas frescas. Delivery express, aún latiendo".',
+  'Por violar a su hijo autista hasta que dejó de hablar para siempre. "Terapia de silencio. Caro, pero efectivo".',
+  'Por hacer un piano con huesos de niños desaparecidos. "Música de la inocencia. Cada tecla un llanto, cada concierto un funeral".',
+  'Por mantener un harem de cadáveres infantiles en descomposición en su sótano húmedo. "Guardería nocturna. Cuidamos tus pesadillas".',
+  'Por arrancarle el corazón a su novia con las manos desnudas. "Literalmente me robaste el corazón, cariño. Devolví el favor".',
+  'Por hacer una colección de 200 prepucios secos que lleva como amuleto en un collar. "Collar de la virilidad. Cada pieza un fracaso, cada fracaso una victoria".'
 ];
 
 async function createWantedImage(avatarUrl, name, reward) {
@@ -345,14 +438,8 @@ async function createWantedImage(avatarUrl, name, reward) {
   const gray = await squareAvatarGray(avatarUrl, AV, safeName);
   const nameLines = wrapText(safeName, 20).slice(0, 2);
 
-  const footer = WANTED_FOOTERS[Math.floor(Math.random() * WANTED_FOOTERS.length)];
-  const footerLines = [];
-
-  for (const part of footer) {
-    for (const line of wrapText(part, 42)) {
-      footerLines.push(line);
-    }
-  }
+  const footerText = WANTED_FOOTERS[Math.floor(Math.random() * WANTED_FOOTERS.length)];
+  const footerLines = wrapText(footerText, 42);
 
   const FOOTER_SIZE = 16;
   const FOOTER_LINE_HEIGHT = 24;

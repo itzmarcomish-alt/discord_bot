@@ -1934,10 +1934,23 @@ async function handlePolaroid(message, rest) {
 }
 
 async function handleWanted(message, rest) {
-  const targetId = parseUserId(rest);
-  const user = targetId
-    ? await message.client.users.fetch(targetId).catch(() => null)
-    : message.author;
+  let user = null;
+
+  if (message.reference) {
+    const target = await message.fetchReference().catch(() => null);
+
+    if (target) {
+      user = target.author;
+    }
+  }
+
+  if (!user) {
+    const targetId = parseUserId(rest);
+
+    user = targetId
+      ? await message.client.users.fetch(targetId).catch(() => null)
+      : message.author;
+  }
 
   const member = user ? await getGuildMember(message.guild, user.id) : null;
   const name = (member?.displayName || user?.username || '???').slice(0, 40);
