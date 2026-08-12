@@ -65,7 +65,10 @@ const MEMBER_CHANNEL_ALLOW_BITS =
   PermissionFlagsBits.ReadMessageHistory |
   PermissionFlagsBits.AddReactions;
 
-const MEMBER_CHANNEL_DENY_BITS = PermissionFlagsBits.All ^ MEMBER_CHANNEL_ALLOW_BITS;
+const ALL_PERMISSION_BITS = Object.values(PermissionFlagsBits)
+  .reduce((acc, bit) => acc | bit, 0n);
+
+const MEMBER_CHANNEL_DENY_BITS = ALL_PERMISSION_BITS & ~MEMBER_CHANNEL_ALLOW_BITS;
 
 function memberChannelOverwriteData() {
   const data = Object.fromEntries(
