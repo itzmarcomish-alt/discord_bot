@@ -39,7 +39,7 @@ const IMAGE_SPAM_THRESHOLD = 4;
 const IMAGE_SPAM_WINDOW_MS = 60 * 1000;
 
 const LEAVE_MESSAGE = process.env.LEAVE_MESSAGE || '👋 **{username}** abandonó el servidor.';
-const LEAVE_CHANNEL_ID = process.env.LEAVE_CHANNEL_ID || '';
+const LEAVE_CHANNEL_ID = process.env.LEAVE_CHANNEL_ID || '1536992463875735663';
 let leaveMessageOverride = null;
 
 const RAID_JOIN_THRESHOLD = parseInt(process.env.RAID_JOIN_THRESHOLD, 10) || 5;
