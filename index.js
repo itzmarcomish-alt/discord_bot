@@ -24,6 +24,8 @@ const {
 
 const sharp = require('sharp');
 
+const funImages = require('./fun');
+
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -83,7 +85,7 @@ function memberChannelOverwriteData() {
 }
 
 const PUBLIC_COMMANDS = new Set([
-  'help', '8ball', 'dado', 'moneda', 'slap', 'quote',
+  'help', '8ball', 'dado', 'moneda', 'slap', 'quote', 'firma', 'polaroid', 'wanted', 'logro',
   'avatar', 'userinfo', 'serverinfo', 'ping',
   'poll', 'say', 'nivel', 'niveles'
 ]);
@@ -920,7 +922,11 @@ function helpEmbeds(includeModeration) {
     ['`!!dado [caras]`', 'Lanza un dado (6 caras por defecto).'],
     ['`!!moneda`', 'Lanza una moneda: cara o cruz.'],
     ['`!!slap <@usuario>`', 'Le da una bofetada a un usuario.'],
-    ['`!!quote` (respondiendo a un mensaje)', 'Cita el mensaje en una imagen con su autor y avatar.']
+    ['`!!quote` (respondiendo a un mensaje)', 'Cita el mensaje en una imagen con su autor y avatar.'],
+    ['`!!firma [nombre]`', 'Genera tu firma oficial en una imagen.'],
+    ['`!!polaroid [texto]`', 'Tu foto (o la del mensaje respondido) en una polaroid con título.'],
+    ['`!!wanted [@usuario]`', 'Cartel de "Se busca" con el avatar y recompensa.'],
+    ['`!!logro <texto>`', 'Logro desbloqueado estilo Minecraft.']
   ];
 
   const build = (title, color, rows) => new EmbedBuilder()
@@ -1816,53 +1822,13 @@ function wrapText(text, maxChars) {
   return lines.length ? lines : [''];
 }
 
-async function createQuoteImage(content, authorName, avatarUrl) {
-  const WIDTH = 800;
-  const PADDING = 50;
-  const FONT_SIZE = 32;
-  const LINE_HEIGHT = 44;
-  const AVATAR_SIZE = 130;
-
-  const lines = wrapText(content, 26);
-
-  lines[0] = `"${lines[0]}`;
-  lines[lines.length - 1] = `${lines[lines.length - 1]}"`;
-
-  const textBlock = lines.length * LINE_HEIGHT;
-  const quoteStart = PADDING + 40;
-  const attributionY = quoteStart + textBlock + 20;
-  const avatarY = attributionY + 50;
-  const HEIGHT = avatarY + AVATAR_SIZE + PADDING;
-
-  const avatar = await downloadImage(avatarUrl);
-  const avatarBuffer = await sharp(avatar)
-    .resize(AVATAR_SIZE, AVATAR_SIZE, { fit: 'cover' })
-    .composite([{
-      input: Buffer.from(
-        `<svg width="${AVATAR_SIZE}" height="${AVATAR_SIZE}" xmlns="http://www.w3.org/2000/svg">` +
-        `<circle cx="${AVATAR_SIZE / 2}" cy="${AVATAR_SIZE / 2}" r="${AVATAR_SIZE / 2}" fill="white"/>` +
-        '</svg>'
-      ),
-      blend: 'dest-in'
-    }])
-    .png()
-    .toBuffer();
-
-  const avatarBase64 = avatarBuffer.toString('base64');
-
-  const svg =
-    `<svg width="${WIDTH}" height="${HEIGHT}" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">` +
-    `<rect width="${WIDTH}" height="${HEIGHT}" fill="#ffffff"/>` +
-    `<text x="${PADDING}" y="${quoteStart}" font-family="Georgia, serif" font-size="${FONT_SIZE}" font-style="italic" fill="#222222">` +
-    lines.map((line, index) =>
-      `<tspan x="${PADDING}" dy="${index === 0 ? 0 : LINE_HEIGHT}">${escapeXml(line)}</tspan>`
-    ).join('') +
-    `</text>` +
-    `<text x="${PADDING}" y="${attributionY}" font-family="Arial, sans-serif" font-size="26" fill="#777777">-${escapeXml(authorName)}</text>` +
-    `<image x="${PADDING}" y="${avatarY}" width="${AVATAR_SIZE}" height="${AVATAR_SIZE}" xlink:href="data:image/png;base64,${avatarBase64}"/>` +
-    `</svg>`;
-
-  return sharp(Buffer.from(svg)).png().toBuffer();
+async function sendImage(message, buffer, filename) {
+  try {
+    await message.channel.send({ files: [{ attachment: buffer, name: filename }] });
+  } catch (error) {
+    console.error(error);
+    await message.reply('❌ No pude generar la imagen. Inténtalo de nuevo.');
+  }
 }
 
 async function handleQuote(message) {
@@ -1887,16 +1853,104 @@ async function handleQuote(message) {
   }
 
   try {
-    const image = await createQuoteImage(
+    const image = await funImages.createQuoteImage(
       content,
       target.author.username,
-      target.author.displayAvatarURL({ size: 128, extension: 'png' })
+      target.author.displayAvatarURL({ size: 256, extension: 'png' })
     );
 
-    await message.channel.send({ files: [{ attachment: image, name: 'quote.png' }] });
+    await sendImage(message, image, 'quote.png');
   } catch (error) {
     console.error(error);
-    await message.reply(`❌ No pude crear la cita.\n\`${error.message}\``);
+    await message.reply('❌ No pude crear la cita.').catch(() => {});
+  }
+}
+
+async function handleFirma(message, rest) {
+  const name = (rest || '').trim().slice(0, 40) || message.member.displayName || message.author.username;
+
+  try {
+    const image = await funImages.createSignatureImage(
+      name,
+      message.author.displayAvatarURL({ size: 256, extension: 'png' })
+    );
+
+    await sendImage(message, image, 'firma.png');
+  } catch (error) {
+    console.error(error);
+    await message.reply('❌ No pude crear la firma.').catch(() => {});
+  }
+}
+
+async function handlePolaroid(message, rest) {
+  let photo = null;
+
+  if (message.reference) {
+    const target = await message.fetchReference().catch(() => null);
+
+    if (target) {
+      const attachment = getImageFromMessage(target);
+
+      if (attachment) {
+        photo = await funImages.downloadBuffer(attachment.url);
+      }
+    }
+  }
+
+  if (!photo) {
+    photo = await funImages.downloadBuffer(
+      message.author.displayAvatarURL({ size: 512, extension: 'png' })
+    );
+  }
+
+  try {
+    const image = await funImages.createPolaroidImage(photo, rest);
+
+    await sendImage(message, image, 'polaroid.png');
+  } catch (error) {
+    console.error(error);
+    await message.reply('❌ No pude crear la polaroid.').catch(() => {});
+  }
+}
+
+async function handleWanted(message, rest) {
+  const targetId = parseUserId(rest);
+  const user = targetId
+    ? await message.client.users.fetch(targetId).catch(() => null)
+    : message.author;
+
+  const member = user ? await getGuildMember(message.guild, user.id) : null;
+  const name = (member?.displayName || user?.username || '???').slice(0, 40);
+  const reward = Math.floor(Math.random() * 9000) + 1000;
+
+  try {
+    const image = await funImages.createWantedImage(
+      user ? user.displayAvatarURL({ size: 256, extension: 'png' }) : null,
+      name,
+      reward
+    );
+
+    await sendImage(message, image, 'wanted.png');
+  } catch (error) {
+    console.error(error);
+    await message.reply('❌ No pude crear el cartel.').catch(() => {});
+  }
+}
+
+async function handleLogro(message, rest) {
+  const text = (rest || '').trim();
+
+  if (!text) {
+    return message.reply('❌ Uso: `!!logro <texto>`');
+  }
+
+  try {
+    const image = await funImages.createAchievementImage(text);
+
+    await sendImage(message, image, 'logro.png');
+  } catch (error) {
+    console.error(error);
+    await message.reply('❌ No pude crear el logro.').catch(() => {});
   }
 }
 
@@ -2129,7 +2183,7 @@ client.on('messageCreate', async message => {
 
     if (!content.startsWith('!!')) return;
 
-    const commandMatch = /^!!(emoji|sticker|ban|kick|timeout|unban|warn|warns|delwarn|slowmode|lock|unlock|announce|avatar|userinfo|serverinfo|ping|poll|say|8ball|dado|moneda|slap|quote|mute|unmute|vc|antiraid|despedida|nivel|niveles|help|canales)\b/i.exec(content);
+    const commandMatch = /^!!(emoji|sticker|ban|kick|timeout|unban|warn|warns|delwarn|slowmode|lock|unlock|announce|avatar|userinfo|serverinfo|ping|poll|say|8ball|dado|moneda|slap|quote|firma|polaroid|wanted|logro|mute|unmute|vc|antiraid|despedida|nivel|niveles|help|canales)\b/i.exec(content);
 
     if (!commandMatch) return;
 
@@ -2251,6 +2305,26 @@ client.on('messageCreate', async message => {
 
     if (commandName === 'quote') {
       await handleQuote(message);
+      return;
+    }
+
+    if (commandName === 'firma') {
+      await handleFirma(message, rest);
+      return;
+    }
+
+    if (commandName === 'polaroid') {
+      await handlePolaroid(message, rest);
+      return;
+    }
+
+    if (commandName === 'wanted') {
+      await handleWanted(message, rest);
+      return;
+    }
+
+    if (commandName === 'logro') {
+      await handleLogro(message, rest);
       return;
     }
 
