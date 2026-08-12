@@ -742,6 +742,14 @@ async function applyChannelRestrictions(guild) {
 
       if (!role) continue;
 
+      const overwrite = channel.permissionOverwrites.cache.get(roleId);
+      const isCorrect = overwrite &&
+        overwrite.allow.has(PermissionFlagsBits.ViewChannel) &&
+        overwrite.allow.has(PermissionFlagsBits.ReadMessageHistory) &&
+        overwrite.deny.has(PermissionFlagsBits.SendMessages);
+
+      if (isCorrect) continue;
+
       await channel.permissionOverwrites
         .edit(role, {
           ViewChannel: true,
@@ -755,6 +763,11 @@ async function applyChannelRestrictions(guild) {
       const role = guild.roles.cache.get(roleId);
 
       if (!role) continue;
+
+      const overwrite = channel.permissionOverwrites.cache.get(roleId);
+      const isCorrect = overwrite && overwrite.allow.has(PermissionFlagsBits.SendMessages);
+
+      if (isCorrect) continue;
 
       await channel.permissionOverwrites
         .edit(role, { SendMessages: true })
