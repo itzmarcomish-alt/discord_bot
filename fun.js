@@ -465,6 +465,48 @@ async function createWantedImage(avatarUrl, name, reward) {
   return sharp(Buffer.from(svg)).png().toBuffer();
 }
 
+async function createWelcomeImage(avatarUrl, username, serverName, memberCount) {
+  const W = 800;
+  const H = 430;
+  const AV = 160;
+  const cx = W / 2;
+  const safeName = sanitize(username, 24);
+  const safeServer = sanitize(serverName, 30);
+  const avatarY = 180;
+
+  const avatar = await circularAvatar(avatarUrl, AV, safeName);
+
+  const svg = svgDoc(W, H,
+    '<defs>' +
+    '<linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">' +
+    '<stop offset="0%" stop-color="#1b1b3a"/>' +
+    '<stop offset="55%" stop-color="#2b1055"/>' +
+    '<stop offset="100%" stop-color="#3a0ca3"/>' +
+    '</linearGradient>' +
+    '<linearGradient id="accent" x1="0" y1="0" x2="1" y2="0">' +
+    '<stop offset="0%" stop-color="#ffce54"/>' +
+    '<stop offset="100%" stop-color="#ff9d3c"/>' +
+    '</linearGradient>' +
+    '</defs>' +
+    '<rect width="' + W + '" height="' + H + '" fill="url(#bg)"/>' +
+    '<circle cx="' + (W * 0.12) + '" cy="' + (H * 0.2) + '" r="120" fill="none" stroke="#ffffff" stroke-opacity="0.06" stroke-width="2"/>' +
+    '<circle cx="' + (W * 0.9) + '" cy="' + (H * 0.78) + '" r="150" fill="none" stroke="#ffffff" stroke-opacity="0.05" stroke-width="2"/>' +
+    '<rect x="10" y="10" width="' + (W - 20) + '" height="' + (H - 20) + '" fill="none" stroke="#ffce54" stroke-width="2"/>' +
+    '<rect x="18" y="18" width="' + (W - 36) + '" height="' + (H - 36) + '" fill="none" stroke="#ffce54" stroke-opacity="0.35" stroke-width="1"/>' +
+    '<text x="' + cx + '" y="72" text-anchor="middle" font-family="Luckiest Guy" font-size="46" fill="url(#accent)">¡BIENVENIDO!</text>' +
+    '<text x="' + cx + '" y="128" text-anchor="middle" font-family="Rye" font-size="38" fill="#ffffff" letter-spacing="2">' + escapeXml(safeServer) + '</text>' +
+    '<circle cx="' + cx + '" cy="' + (avatarY + AV / 2) + '" r="' + (AV / 2 + 24) + '" fill="none" stroke="#ffffff" stroke-opacity="0.25" stroke-width="2"/>' +
+    '<circle cx="' + cx + '" cy="' + (avatarY + AV / 2) + '" r="' + (AV / 2 + 14) + '" fill="none" stroke="url(#accent)" stroke-width="6"/>' +
+    '<image x="' + (cx - AV / 2) + '" y="' + avatarY + '" width="' + AV + '" height="' + AV + '" xlink:href="data:image/png;base64,' + avatar + '"/>' +
+    '<text x="' + cx + '" y="' + (avatarY + AV + 52) + '" text-anchor="middle" font-family="Arial, sans-serif" font-size="24" font-weight="bold" fill="#ffffff">' + escapeXml(safeName) + '</text>' +
+    (memberCount
+      ? '<text x="' + cx + '" y="' + (avatarY + AV + 80) + '" text-anchor="middle" font-family="Arial, sans-serif" font-size="17" fill="#ffce54">¡Ya somos ' + memberCount + ' miembros!</text>'
+      : '')
+  , true);
+
+  return sharp(Buffer.from(svg)).png().toBuffer();
+}
+
 async function createAchievementImage(text) {
   const W = 640;
   const H = 320;
@@ -494,5 +536,6 @@ module.exports = {
   createSignatureImage,
   createPolaroidImage,
   createWantedImage,
-  createAchievementImage
+  createAchievementImage,
+  createWelcomeImage,
 };

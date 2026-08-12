@@ -2190,16 +2190,14 @@ client.on('guildMemberAdd', async member => {
 
     if (!channel) return;
 
-    const embed = new EmbedBuilder()
-      .setTitle('🎉 ¡Bienvenido!')
-      .setDescription(
-        `¡Hola <@${member.user.id}>! Bienvenido/a a **${member.guild.name}**.`
-      )
-      .setColor(0x57f287)
-      .setThumbnail(member.user.displayAvatarURL({ dynamic: true }))
-      .setTimestamp();
+    const image = await funImages.createWelcomeImage(
+      member.user.displayAvatarURL({ size: 512, extension: 'png' }),
+      member.user.username,
+      member.guild.name,
+      member.guild.memberCount
+    );
 
-    await channel.send({ embeds: [embed] });
+    await channel.send({ files: [{ attachment: image, name: 'bienvenida.png' }] });
   } catch (error) {
     console.error('Error en bienvenida:', error);
   }
