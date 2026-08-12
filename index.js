@@ -25,6 +25,7 @@ const {
 const sharp = require('sharp');
 
 const funImages = require('./fun');
+const storage = require('./db');
 
 const client = new Client({
   intents: [
@@ -53,7 +54,6 @@ const LEAVE_CHANNEL_ID = process.env.LEAVE_CHANNEL_ID || '1536992463875735663';
 let leaveMessageOverride = null;
 
 const LEVEL_CHANNEL_ID = process.env.LEVEL_CHANNEL_ID || '1536991424032014428';
-const LEVELS_FILE = path.join(__dirname, 'levels.json');
 const LEVELS = new Map();
 
 const MEMBER_DENIED_ROLES = new Set([
@@ -1001,9 +1001,9 @@ function levelInfo(xp) {
 
 let saveLevelsTimer = null;
 
-function saveLevels() {
+async function saveLevels() {
   try {
-    fs.writeFileSync(LEVELS_FILE, JSON.stringify(Object.fromEntries(LEVELS)));
+    await storage.save(Object.fromEntries(LEVELS));
   } catch (error) {
     console.error('No pude guardar los niveles:', error);
   }
@@ -1014,10 +1014,9 @@ function saveLevelsDebounced() {
   saveLevelsTimer = setTimeout(saveLevels, 5000);
 }
 
-function loadLevels() {
+async function loadLevels() {
   try {
-    const raw = fs.readFileSync(LEVELS_FILE, 'utf8');
-    const data = JSON.parse(raw);
+    const data = await storage.load();
 
     LEVELS.clear();
 
@@ -2679,7 +2678,7 @@ async function registerCommands() {
 
 (async () => {
   try {
-    loadLevels();
+    await loadLevels();
 
     await registerCommands();
     await client.login(process.env.TOKEN);
@@ -2689,12 +2688,12 @@ async function registerCommands() {
   }
 })();
 
-process.on('SIGTERM', () => {
-  saveLevels();
+process.on('SIGTERM', async () => {
+  await saveLevels();
   process.exit(0);
 });
 
-process.on('SIGINT', () => {
-  saveLevels();
+process.on('SIGINT', async () => {
+  await saveLevels();
   process.exit(0);
 });
