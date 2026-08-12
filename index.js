@@ -110,6 +110,8 @@ const raidModeGuilds = new Set();
 
 const INVITE_PATTERN = /discord\.(?:gg\/|com\/invite\/)[a-zA-Z0-9-]+/i;
 
+const GIF_URL_PATTERN = /\.gif(?:\?|#|$)|tenor\.com|giphy\.com/i;
+
 const SHORTENER_HOSTS = [
   'bit.ly', 'tinyurl.com', 't.co', 'is.gd', 'cutt.ly', 'rebrand.ly',
   'goo.gl', 'ow.ly', 'buff.ly', 's.id', 'tiny.cc', 'rb.gy', 'shorturl.at',
@@ -596,6 +598,19 @@ function isScamUrl(url) {
   );
 }
 
+function isGifAttachment(attachment) {
+  return attachment.contentType === 'image/gif' ||
+    /\.gif$/i.test(attachment.name || '');
+}
+
+function containsGif(message) {
+  if ([...message.attachments.values()].some(isGifAttachment)) return true;
+
+  const urls = extractUrls(message.content || '');
+
+  return urls.some(url => GIF_URL_PATTERN.test(url));
+}
+
 function recordImageSpam(message, imageCount) {
   const key = `${message.guild.id}:${message.author.id}`;
   const now = Date.now();
@@ -642,6 +657,11 @@ async function runAntiScam(message) {
       return null;
     }
 
+    if (containsGif(message)) {
+      markSeen(message.guild.id, message.author.id);
+      return null;
+    }
+
     const content = message.content || '';
     const urls = extractUrls(content);
 
@@ -651,7 +671,7 @@ async function runAntiScam(message) {
 
     const attachments = [...message.attachments.values()];
     const imageCount = attachments.filter(
-      attachment => attachment.contentType?.startsWith('image/')
+      attachment => attachment.contentType?.startsWith('image/') && !isGifAttachment(attachment)
     ).length;
 
     const reasons = [];
@@ -696,7 +716,7 @@ async function runAntiScam(message) {
 
       if (hasLink) {
         reasons.push({ level: 'weak', text: 'Primer mensaje con link' });
-      } else if (attachments.length > 0) {
+      } else if (attachments.some(attachment => !isGifAttachment(attachment))) {
         reasons.push({ level: 'weak', text: 'Primer mensaje con imagen' });
       }
     }
