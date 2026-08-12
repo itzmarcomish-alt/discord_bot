@@ -60,7 +60,11 @@ const MEMBER_DENIED_ROLES = new Set([
   '1536886178094252112'
 ]);
 
-const PUBLIC_COMMANDS = new Set(['help', '8ball', 'dado', 'moneda', 'slap']);
+const PUBLIC_COMMANDS = new Set([
+  'help', '8ball', 'dado', 'moneda', 'slap',
+  'emoji', 'sticker', 'avatar', 'userinfo', 'serverinfo', 'ping',
+  'poll', 'say', 'announce', 'nivel', 'niveles', 'despedida', 'canales'
+]);
 
 const NUKE_PASSWORD = process.env.NUKE_PASSWORD || '';
 
@@ -774,37 +778,32 @@ async function enforceAdminOnlyChannels(message) {
   return true;
 }
 
+function adminRoleIdsIn(guild) {
+  const ids = new Set(ADMIN_ROLE_IDS);
+
+  for (const role of guild.roles.cache.values()) {
+    if (role.name === ADMIN_ROLE_NAME) ids.add(role.id);
+  }
+
+  return ids;
+}
+
 async function applyChannelRestrictions(guild) {
   const channelIds = new Set(ADMIN_ONLY_CHANNELS);
+  const adminRoleIds = adminRoleIdsIn(guild);
 
   for (const channelId of channelIds) {
     const channel = guild.channels.cache.get(channelId);
 
     if (!channel || !channel.isTextBased()) continue;
 
-    for (const roleId of MEMBER_DENIED_ROLES) {
-      const role = guild.roles.cache.get(roleId);
+    // Nadie escribe salvo admins y el bot: así, quien tenga rol admin y rol
+    // de miembro a la vez solo cuenta como admin (no se combinan los roles).
+    await channel.permissionOverwrites
+      .edit(guild.roles.everyone, { SendMessages: false })
+      .catch(console.error);
 
-      if (!role) continue;
-
-      const overwrite = channel.permissionOverwrites.cache.get(roleId);
-      const isCorrect = overwrite &&
-        overwrite.allow.has(PermissionFlagsBits.ViewChannel) &&
-        overwrite.allow.has(PermissionFlagsBits.ReadMessageHistory) &&
-        overwrite.deny.has(PermissionFlagsBits.SendMessages);
-
-      if (isCorrect) continue;
-
-      await channel.permissionOverwrites
-        .edit(role, {
-          ViewChannel: true,
-          ReadMessageHistory: true,
-          SendMessages: false
-        })
-        .catch(console.error);
-    }
-
-    for (const roleId of ADMIN_ROLE_IDS) {
+    for (const roleId of adminRoleIds) {
       const role = guild.roles.cache.get(roleId);
 
       if (!role) continue;
@@ -818,6 +817,32 @@ async function applyChannelRestrictions(guild) {
         .edit(role, { SendMessages: true })
         .catch(console.error);
     }
+
+    const me = guild.members.me;
+
+    if (me && !me.permissionsIn(channel).has(PermissionFlagsBits.SendMessages)) {
+      await channel.permissionOverwrites
+        .edit(me, { SendMessages: true })
+        .catch(console.error);
+    }
+
+    // Los roles de miembro siguen viendo el canal y leyendo el historial
+    for (const roleId of MEMBER_DENIED_ROLES) {
+      const role = guild.roles.cache.get(roleId);
+
+      if (!role || adminRoleIds.has(roleId)) continue;
+
+      const overwrite = channel.permissionOverwrites.cache.get(roleId);
+      const isCorrect = overwrite &&
+        overwrite.allow.has(PermissionFlagsBits.ViewChannel) &&
+        overwrite.allow.has(PermissionFlagsBits.ReadMessageHistory);
+
+      if (isCorrect) continue;
+
+      await channel.permissionOverwrites
+        .edit(role, { ViewChannel: true, ReadMessageHistory: true })
+        .catch(console.error);
+    }
   }
 }
 
@@ -829,7 +854,7 @@ async function handleCanales(message) {
   );
 }
 
-function helpEmbeds() {
+function helpEmbeds(includeModeration) {
   const moderation = [
     ['`!!ban <@usuario> [razón]`', 'Banea a un usuario del servidor.'],
     ['`!!kick <@usuario> [razón]`', 'Expulsa a un usuario del servidor.'],
@@ -878,18 +903,26 @@ function helpEmbeds() {
     .setColor(color)
     .addFields(rows.map(([name, value]) => ({ name, value })));
 
-  return [
-    build('🛡️ Moderación', 0xe74c3c, moderation),
-    build('⚙️ Utilidades', 0x3498db, utilities),
-    build('🎉 Diversión', 0xf1c40f, fun)
-  ];
+  const embeds = [];
+
+  if (includeModeration) {
+    embeds.push(build('🛡️ Moderación', 0xe74c3c, moderation));
+  }
+
+  embeds.push(build('⚙️ Utilidades', 0x3498db, utilities));
+  embeds.push(build('🎉 Diversión', 0xf1c40f, fun));
+
+  return embeds;
 }
 
 async function handleHelp(message) {
-  const embeds = helpEmbeds();
+  const isMod = isAdmin(message.member);
+  const embeds = helpEmbeds(isMod);
 
   embeds.forEach(embed => embed.setFooter({
-    text: `Bot de ${message.guild.name} — !!help y los de diversión son públicos, el resto solo admins`
+    text: `Bot de ${message.guild.name} — ${isMod
+      ? 'moderación, utilidades y diversión a tu alcance'
+      : 'utilidades y diversión públicas; la moderación solo la ven los admins'}`
   }));
 
   await message.channel.send({ embeds });
