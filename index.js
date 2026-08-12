@@ -29,7 +29,8 @@ const client = new Client({
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMembers,
     GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent
+    GatewayIntentBits.MessageContent,
+    ...(process.env.WELCOME_CHANNEL_ID ? [GatewayIntentBits.GuildMembers] : [])
   ]
 });
 
@@ -38,6 +39,7 @@ const ADMIN_ROLE_IDS = new Set(
   (process.env.ADMIN_ROLE_IDS || '').split(',').map(id => id.trim()).filter(Boolean)
 );
 const MODLOG_CHANNEL_ID = process.env.MODLOG_CHANNEL_ID || '';
+const WELCOME_CHANNEL_ID = process.env.WELCOME_CHANNEL_ID || '';
 const SCAM_EXCLUDED_CHANNELS = new Set(
   (process.env.SCAM_EXCLUDED_CHANNELS || '').split(',').map(id => id.trim()).filter(Boolean)
 );
@@ -1888,6 +1890,31 @@ client.once('clientReady', async () => {
   }
 
   console.log('🔒 Restricciones de canales aplicadas.');
+});
+
+client.on('guildMemberAdd', async member => {
+  try {
+    if (member.user.bot) return;
+
+    const channel = WELCOME_CHANNEL_ID
+      ? await client.channels.fetch(WELCOME_CHANNEL_ID).catch(() => null)
+      : null;
+
+    if (!channel) return;
+
+    const embed = new EmbedBuilder()
+      .setTitle('🎉 ¡Bienvenido!')
+      .setDescription(
+        `¡Hola <@${member.user.id}>! Bienvenido/a a **${member.guild.name}**.`
+      )
+      .setColor(0x57f287)
+      .setThumbnail(member.user.displayAvatarURL({ dynamic: true }))
+      .setTimestamp();
+
+    await channel.send({ embeds: [embed] });
+  } catch (error) {
+    console.error('Error en bienvenida:', error);
+  }
 });
 
 client.on('messageCreate', async message => {
