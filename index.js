@@ -25,6 +25,9 @@ const client = new Client({
 });
 
 const ADMIN_ROLE_NAME = process.env.ADMIN_ROLE_NAME || 'Admin';
+const ADMIN_ROLE_IDS = new Set(
+  (process.env.ADMIN_ROLE_IDS || '').split(',').map(id => id.trim()).filter(Boolean)
+);
 const MODLOG_CHANNEL_ID = process.env.MODLOG_CHANNEL_ID || '';
 const SCAM_EXCLUDED_CHANNELS = new Set(
   (process.env.SCAM_EXCLUDED_CHANNELS || '').split(',').map(id => id.trim()).filter(Boolean)
@@ -77,7 +80,11 @@ const commands = [
       option
         .setName('imagen')
         .setDescription('Imagen que quieres convertir')
-        .setRequired(true)
+    )
+    .addStringOption(option =>
+      option
+        .setName('mensaje_id')
+        .setDescription('ID del mensaje (en este canal) que contiene la imagen')
     )
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
 
@@ -88,9 +95,74 @@ const commands = [
       option
         .setName('imagen')
         .setDescription('Imagen que quieres convertir')
-        .setRequired(true)
+    )
+    .addStringOption(option =>
+      option
+        .setName('mensaje_id')
+        .setDescription('ID del mensaje (en este canal) que contiene la imagen')
     )
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+
+  new SlashCommandBuilder()
+    .setName('ban')
+    .setDescription('Banea a un usuario del servidor')
+    .addUserOption(option =>
+      option
+        .setName('usuario')
+        .setDescription('Usuario a banear')
+        .setRequired(true)
+    )
+    .addStringOption(option =>
+      option
+        .setName('razon')
+        .setDescription('Motivo del baneo')
+    )
+    .setDefaultMemberPermissions(PermissionFlagsBits.BanMembers),
+
+  new SlashCommandBuilder()
+    .setName('kick')
+    .setDescription('Expulsa a un usuario del servidor')
+    .addUserOption(option =>
+      option
+        .setName('usuario')
+        .setDescription('Usuario a expulsar')
+        .setRequired(true)
+    )
+    .addStringOption(option =>
+      option
+        .setName('razon')
+        .setDescription('Motivo de la expulsión')
+    )
+    .setDefaultMemberPermissions(PermissionFlagsBits.KickMembers),
+
+  new SlashCommandBuilder()
+    .setName('timeout')
+    .setDescription('Silencia temporalmente a un usuario')
+    .addUserOption(option =>
+      option
+        .setName('usuario')
+        .setDescription('Usuario a silenciar')
+        .setRequired(true)
+    )
+    .addStringOption(option =>
+      option
+        .setName('duracion')
+        .setDescription('Duración del timeout (por defecto: 1 hora)')
+        .setChoices(
+          { name: '1 minuto', value: '1m' },
+          { name: '5 minutos', value: '5m' },
+          { name: '1 hora', value: '1h' },
+          { name: '6 horas', value: '6h' },
+          { name: '1 día', value: '1d' },
+          { name: '7 días', value: '7d' }
+        )
+    )
+    .addStringOption(option =>
+      option
+        .setName('razon')
+        .setDescription('Motivo del timeout')
+    )
+    .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers),
 
   new ContextMenuCommandBuilder()
     .setName('Convertir a emoji')
@@ -110,7 +182,87 @@ function isAdmin(member) {
     return true;
   }
 
-  return member.roles.cache.some(role => role.name === ADMIN_ROLE_NAME);
+  return member.roles.cache.some(
+    role => role.name === ADMIN_ROLE_NAME || ADMIN_ROLE_IDS.has(role.id)
+  );
+}
+
+function adminRoleLabel() {
+  const firstId = ADMIN_ROLE_IDS.values().next().value;
+
+  if (firstId) return `<@&${firstId}>`;
+
+  return `**${ADMIN_ROLE_NAME}**`;
+}
+
+function parseDuration(value) {
+  const match = /^(\d+)([smhd])$/.exec((value || '').trim().toLowerCase());
+  if (!match) return null;
+
+  const amount = parseInt(match[1], 10);
+  const unitMs = { s: 1000, m: 60000, h: 3600000, d: 86400000 }[match[2]];
+
+  if (amount <= 0) return null;
+
+  const ms = amount * unitMs;
+
+  if (ms < 60000) return null;
+
+  return Math.min(ms, 28 * 86400000);
+}
+
+async function getGuildMember(guild, userId) {
+  return guild.members.fetch(userId).catch(() => null);
+}
+
+async function ensureAdmin(interaction) {
+  if (!interaction.guild) {
+    await interaction.reply({
+      content: '❌ Este comando solo puede utilizarse dentro de un servidor.',
+      ephemeral: true
+    });
+    return false;
+  }
+
+  if (!isAdmin(interaction.member)) {
+    await interaction.reply({
+      content: `❌ Necesitas tener el rol ${adminRoleLabel()} para usar esto.`,
+      ephemeral: true
+    });
+    return false;
+  }
+
+  return true;
+}
+
+async function ensureTarget(interaction, target, action) {
+  if (target.id === interaction.user.id) {
+    await interaction.reply({
+      content: `❌ No puedes aplicarte **${action}** a ti mismo.`,
+      ephemeral: true
+    });
+    return false;
+  }
+
+  if (target.id === client.user.id) {
+    await interaction.reply({
+      content: `❌ No puedes aplicarme **${action}**.`,
+      ephemeral: true
+    });
+    return false;
+  }
+
+  const member = await getGuildMember(interaction.guild, target.id);
+
+  if (member && isAdmin(member)) {
+    await interaction.reply({
+      content: `❌ No puedes aplicar **${action}** a un administrador.`,
+      ephemeral: true
+    });
+    return false;
+  }
+
+  return member;
 }
 
 async function downloadImage(url) {
@@ -200,6 +352,70 @@ async function getImageFromMessage(message) {
   return attachment || null;
 }
 
+async function findMessageByAttachmentId(channel, attachmentId) {
+  let before;
+
+  for (let batch = 0; batch < 5; batch++) {
+    const options = { limit: 100 };
+
+    if (before) options.before = before;
+
+    const messages = await channel.messages.fetch(options);
+
+    if (messages.size === 0) break;
+
+    for (const msg of messages.values()) {
+      if (msg.attachments.has(attachmentId)) return msg;
+    }
+
+    before = messages.last().id;
+  }
+
+  return null;
+}
+
+async function resolveTargetMessage(channel, id) {
+  const message = await channel.messages.fetch(id).catch(() => null);
+
+  if (message) return message;
+
+  return findMessageByAttachmentId(channel, id);
+}
+
+async function resolveImageFromOptions(interaction) {
+  const attachment = interaction.options.getAttachment('imagen');
+  const messageId = interaction.options.getString('mensaje_id');
+
+  if (messageId) {
+    if (attachment) {
+      return { attachment: null, error: '❌ Proporciona una imagen O un ID de mensaje, no ambos.' };
+    }
+
+    if (!interaction.channel) {
+      return { attachment: null, error: '❌ No puedo buscar mensajes en este canal.' };
+    }
+
+    const message = await resolveTargetMessage(interaction.channel, messageId);
+
+    if (!message) {
+      return {
+        attachment: null,
+        error: `❌ No encontré un mensaje (o adjunto) con el ID \`${messageId}\` en este canal.`
+      };
+    }
+
+    const found = await getImageFromMessage(message);
+
+    if (!found) {
+      return { attachment: null, error: '❌ Ese mensaje no contiene una imagen.' };
+    }
+
+    return { attachment: found, error: null };
+  }
+
+  return { attachment, error: null };
+}
+
 async function nextAvailableName(manager, prefix) {
   await manager.fetch();
 
@@ -284,7 +500,7 @@ async function processEmoji(ctx, attachment) {
   }
 
   if (!isAdmin(ctx.member)) {
-    return ctx.reply(`❌ Necesitas tener el rol **${ADMIN_ROLE_NAME}** para usar esto.`);
+    return ctx.reply(`❌ Necesitas tener el rol ${adminRoleLabel()} para usar esto.`);
   }
 
   if (!attachment || !attachment.contentType?.startsWith('image/')) {
@@ -310,7 +526,7 @@ async function processSticker(ctx, attachment) {
   }
 
   if (!isAdmin(ctx.member)) {
-    return ctx.reply(`❌ Necesitas tener el rol **${ADMIN_ROLE_NAME}** para usar esto.`);
+    return ctx.reply(`❌ Necesitas tener el rol ${adminRoleLabel()} para usar esto.`);
   }
 
   if (!attachment || !attachment.contentType?.startsWith('image/')) {
@@ -546,6 +762,89 @@ async function runAntiScam(message) {
   }
 }
 
+async function handleBan(interaction) {
+  if (!(await ensureAdmin(interaction))) return;
+
+  const target = interaction.options.getUser('usuario');
+  const reason = interaction.options.getString('razon') || 'No especificada';
+
+  const member = await ensureTarget(interaction, target, 'el baneo');
+  if (member === false) return;
+
+  await interaction.deferReply({ ephemeral: true });
+
+  try {
+    await interaction.guild.members.ban(target.id, { reason });
+    await interaction.editReply(`✅ **${target.tag}** fue baneado.\n**Motivo:** ${reason}`);
+  } catch (error) {
+    console.error(error);
+    await interaction.editReply('❌ No pude banear al usuario. ¿Tengo permisos de **Banear miembros**?');
+  }
+}
+
+async function handleKick(interaction) {
+  if (!(await ensureAdmin(interaction))) return;
+
+  const target = interaction.options.getUser('usuario');
+  const reason = interaction.options.getString('razon') || 'No especificada';
+
+  const member = await ensureTarget(interaction, target, 'la expulsión');
+  if (member === false) return;
+
+  if (!member) {
+    return interaction.reply({
+      content: `❌ No pude encontrar a **${target.tag}** en este servidor.`,
+      ephemeral: true
+    });
+  }
+
+  await interaction.deferReply({ ephemeral: true });
+
+  try {
+    await member.kick(reason);
+    await interaction.editReply(`✅ **${target.tag}** fue expulsado.\n**Motivo:** ${reason}`);
+  } catch (error) {
+    console.error(error);
+    await interaction.editReply('❌ No pude expulsar al usuario. ¿Tengo permisos de **Expulsar miembros**?');
+  }
+}
+
+async function handleTimeout(interaction) {
+  if (!(await ensureAdmin(interaction))) return;
+
+  const target = interaction.options.getUser('usuario');
+  const duration = interaction.options.getString('duracion') || '1h';
+  const reason = interaction.options.getString('razon') || 'No especificada';
+  const ms = parseDuration(duration);
+
+  if (!ms) {
+    return interaction.reply({
+      content: '❌ Duración no válida. Usa valores como `1m`, `5m`, `1h`, `1d`.',
+      ephemeral: true
+    });
+  }
+
+  const member = await ensureTarget(interaction, target, 'el timeout');
+  if (member === false) return;
+
+  if (!member) {
+    return interaction.reply({
+      content: `❌ No pude encontrar a **${target.tag}** en este servidor.`,
+      ephemeral: true
+    });
+  }
+
+  await interaction.deferReply({ ephemeral: true });
+
+  try {
+    await member.timeout(ms, reason);
+    await interaction.editReply(`✅ **${target.tag}** recibió un timeout de ${duration}.\n**Motivo:** ${reason}`);
+  } catch (error) {
+    console.error(error);
+    await interaction.editReply('❌ No pude aplicar el timeout. ¿Tengo permisos de **Moderar miembros**?');
+  }
+}
+
 client.once('clientReady', () => {
   console.log(`✅ Conectado como ${client.user.tag}`);
 });
@@ -570,21 +869,57 @@ client.on('messageCreate', async message => {
 
     if (!content.startsWith('!!')) return;
 
-    if (content !== '!!emoji' && content !== '!!sticker') return;
+    const commandMatch = /^!!(emoji|sticker)\b/i.exec(content);
+
+    if (!commandMatch) return;
+
+    const commandName = commandMatch[1].toLowerCase();
+    const rest = content.slice(commandMatch[0].length).trim();
+
+    let messageId = null;
+
+    if (rest !== '') {
+      const idMatch = /^(\d{17,20})$/.exec(rest);
+
+      if (!idMatch) {
+        return message.reply(
+          `❌ ID no válido: \`${rest}\`. Debe ser el ID de un mensaje (solo números).`
+        );
+      }
+
+      messageId = idMatch[1];
+    }
 
     if (!message.guild) return;
 
     if (!isAdmin(message.member)) {
       return message.reply(
-        `❌ Necesitas tener el rol **${ADMIN_ROLE_NAME}** para usar esto.`
+        `❌ Necesitas tener el rol ${adminRoleLabel()} para usar esto.`
       );
     }
 
-    if (!message.reference) {
-      return message.reply('❌ Responde a un mensaje que contenga una imagen.');
+    let target;
+
+    if (messageId) {
+      target = await resolveTargetMessage(message.channel, messageId);
+
+      if (!target) {
+        return message.reply(
+          `❌ No encontré un mensaje (o adjunto) con el ID \`${messageId}\` en este canal.`
+        );
+      }
+    } else if (message.reference) {
+      target = await message.fetchReference().catch(() => null);
+
+      if (!target) {
+        return message.reply('❌ No pude obtener el mensaje al que respondiste.');
+      }
+    } else {
+      return message.reply(
+        '❌ Responde a un mensaje o pasa el ID del mensaje. Ej: `!!emoji 123456789012345678`'
+      );
     }
 
-    const target = await message.fetchReference();
     const attachment = await getImageFromMessage(target);
 
     if (!attachment) {
@@ -593,7 +928,7 @@ client.on('messageCreate', async message => {
 
     const ctx = await messageCtx(message);
 
-    if (content === '!!emoji') {
+    if (commandName === 'emoji') {
       await processEmoji(ctx, attachment);
     } else {
       await processSticker(ctx, attachment);
@@ -610,13 +945,35 @@ client.on('interactionCreate', async interaction => {
   try {
     if (interaction.isChatInputCommand()) {
       if (interaction.commandName === 'emoji') {
-        const attachment = interaction.options.getAttachment('imagen');
+        const { attachment, error } = await resolveImageFromOptions(interaction);
+
+        if (error) {
+          return interaction.reply({ content: error, ephemeral: true });
+        }
+
         await processEmoji(interactionCtx(interaction), attachment);
       }
 
       if (interaction.commandName === 'sticker') {
-        const attachment = interaction.options.getAttachment('imagen');
+        const { attachment, error } = await resolveImageFromOptions(interaction);
+
+        if (error) {
+          return interaction.reply({ content: error, ephemeral: true });
+        }
+
         await processSticker(interactionCtx(interaction), attachment);
+      }
+
+      if (interaction.commandName === 'ban') {
+        await handleBan(interaction);
+      }
+
+      if (interaction.commandName === 'kick') {
+        await handleKick(interaction);
+      }
+
+      if (interaction.commandName === 'timeout') {
+        await handleTimeout(interaction);
       }
 
       return;
@@ -632,7 +989,7 @@ client.on('interactionCreate', async interaction => {
 
       if (!isAdmin(interaction.member)) {
         return interaction.reply({
-          content: `❌ Necesitas tener el rol **${ADMIN_ROLE_NAME}** para usar esto.`,
+          content: `❌ Necesitas tener el rol ${adminRoleLabel()} para usar esto.`,
           ephemeral: true
         });
       }
