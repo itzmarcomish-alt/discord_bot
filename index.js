@@ -1,6 +1,8 @@
 require('dotenv').config();
 
 const http = require('http');
+const fs = require('fs');
+const path = require('path');
 
 const {
   Client,
@@ -43,7 +45,14 @@ const LEAVE_CHANNEL_ID = process.env.LEAVE_CHANNEL_ID || '1536992463875735663';
 let leaveMessageOverride = null;
 
 const LEVEL_CHANNEL_ID = process.env.LEVEL_CHANNEL_ID || '1536991424032014428';
+const LEVELS_FILE = path.join(__dirname, 'levels.json');
 const LEVELS = new Map();
+
+const MEMBER_DENIED_ROLES = new Set([
+  ...(process.env.MEMBER_DENIED_ROLES || '').split(',').map(id => id.trim()).filter(Boolean),
+  '1536878763139276830',
+  '1536886178094252112'
+]);
 
 const ADMIN_ONLY_CHANNELS = new Set([
   ...(process.env.ADMIN_ONLY_CHANNELS || '').split(',').map(id => id.trim()).filter(Boolean),
@@ -718,6 +727,113 @@ async function enforceAdminOnlyChannels(message) {
   return true;
 }
 
+async function applyChannelRestrictions(guild) {
+  const channelIds = new Set(ADMIN_ONLY_CHANNELS);
+
+  for (const channelId of channelIds) {
+    const channel = guild.channels.cache.get(channelId);
+
+    if (!channel || !channel.isTextBased()) continue;
+
+    for (const roleId of MEMBER_DENIED_ROLES) {
+      const role = guild.roles.cache.get(roleId);
+
+      if (!role) continue;
+
+      await channel.permissionOverwrites
+        .edit(role, {
+          ViewChannel: true,
+          ReadMessageHistory: true,
+          SendMessages: false
+        })
+        .catch(console.error);
+    }
+
+    for (const roleId of ADMIN_ROLE_IDS) {
+      const role = guild.roles.cache.get(roleId);
+
+      if (!role) continue;
+
+      await channel.permissionOverwrites
+        .edit(role, { SendMessages: true })
+        .catch(console.error);
+    }
+  }
+}
+
+async function handleCanales(message) {
+  await applyChannelRestrictions(message.guild);
+
+  await message.channel.send(
+    '✅ Canales restringidos. Los roles de miembros **no pueden escribir**, pero sí ver el canal, reaccionar y leer el historial.'
+  );
+}
+
+function helpEmbeds() {
+  const moderation = [
+    ['`!!ban <@usuario> [razón]`', 'Banea a un usuario del servidor.'],
+    ['`!!kick <@usuario> [razón]`', 'Expulsa a un usuario del servidor.'],
+    ['`!!timeout <@usuario> <duración> [razón]`', 'Silencio temporal (1m, 5m, 1h, 1d, 7d).'],
+    ['`!!mute <@usuario> [duración]`', 'Silencia por 1 hora si no se indica duración.'],
+    ['`!!unmute <@usuario>`', 'Quita el silencio a un usuario.'],
+    ['`!!unban <id> [razón]`', 'Desbanea a un usuario por su ID.'],
+    ['`!!warn <@usuario> [razón]`', 'Advertencia; con 3 se silencia 1 hora automáticamente.'],
+    ['`!!warns <@usuario>`', 'Muestra las advertencias de un usuario.'],
+    ['`!!delwarn <@usuario>`', 'Borra las advertencias de un usuario.'],
+    ['`!!purgeusuario <cantidad> <@usuario>`', 'Elimina mensajes recientes de un usuario (máx 1000).'],
+    ['`!!erasechat <cantidad>`', 'Elimina los últimos N mensajes del canal (máx 1000).'],
+    ['`!!slowmode <segundos>`', 'Modo lento del canal (0 lo desactiva).'],
+    ['`!!lock` / `!!unlock`', 'Bloquea o desbloquea el canal.'],
+    ['`!!vc <@usuario> <#canal>`', 'Mueve a un usuario a un canal de voz.'],
+    ['`!!antiraid` / `!!antiraid off`', 'Estado del anti-raid o lo desactiva.']
+  ];
+
+  const utilities = [
+    ['`!!emoji` (respondiendo) / `!!emoji <id>`', 'Convierte una imagen en emoji.'],
+    ['`!!sticker` (respondiendo) / `!!sticker <id>`', 'Convierte una imagen en sticker.'],
+    ['`!!avatar [@usuario]`', 'Muestra el avatar ampliado.'],
+    ['`!!userinfo [@usuario]`', 'Información de un usuario.'],
+    ['`!!serverinfo`', 'Información del servidor.'],
+    ['`!!ping`', 'Latencia del bot.'],
+    ['`!!poll <pregunta>`', 'Crea una encuesta con ✅ y ❌.'],
+    ['`!!say <texto>`', 'El bot repite tu mensaje.'],
+    ['`!!announce <texto>`', 'Envía un anuncio en formato embed.'],
+    ['`!!nivel [@usuario]`', 'Nivel, XP y progreso.'],
+    ['`!!niveles`', 'Top 10 de niveles del servidor.'],
+    ['`!!despedida <mensaje>`', 'Personaliza el mensaje de despedida ({user}, {username}, {server}).'],
+    ['`!!canales`', 'Reaplica la restricción de escritura en los canales.'],
+    ['`!!help`', 'Muestra esta ayuda.']
+  ];
+
+  const fun = [
+    ['`!!8ball <pregunta>`', 'Bola mágica: responde tu pregunta.'],
+    ['`!!dado [caras]`', 'Lanza un dado (6 caras por defecto).'],
+    ['`!!moneda`', 'Lanza una moneda: cara o cruz.'],
+    ['`!!slap <@usuario>`', 'Le da una bofetada a un usuario.']
+  ];
+
+  const build = (title, color, rows) => new EmbedBuilder()
+    .setTitle(title)
+    .setColor(color)
+    .addFields(rows.map(([name, value]) => ({ name, value })));
+
+  return [
+    build('🛡️ Moderación', 0xe74c3c, moderation),
+    build('⚙️ Utilidades', 0x3498db, utilities),
+    build('🎉 Diversión', 0xf1c40f, fun)
+  ];
+}
+
+async function handleHelp(message) {
+  const embeds = helpEmbeds();
+
+  embeds.forEach(embed => embed.setFooter({
+    text: `Bot de ${message.guild.name} — todos los comandos son solo para admins`
+  }));
+
+  await message.channel.send({ embeds });
+}
+
 function levelInfo(xp) {
   let level = 1;
   let remaining = xp;
@@ -730,6 +846,38 @@ function levelInfo(xp) {
   }
 
   return { level, xpIntoLevel: remaining, xpToNext: needed };
+}
+
+let saveLevelsTimer = null;
+
+function saveLevels() {
+  try {
+    fs.writeFileSync(LEVELS_FILE, JSON.stringify(Object.fromEntries(LEVELS)));
+  } catch (error) {
+    console.error('No pude guardar los niveles:', error);
+  }
+}
+
+function saveLevelsDebounced() {
+  clearTimeout(saveLevelsTimer);
+  saveLevelsTimer = setTimeout(saveLevels, 5000);
+}
+
+function loadLevels() {
+  try {
+    const raw = fs.readFileSync(LEVELS_FILE, 'utf8');
+    const data = JSON.parse(raw);
+
+    LEVELS.clear();
+
+    for (const [key, value] of Object.entries(data)) {
+      LEVELS.set(key, value);
+    }
+
+    console.log(`📊 Niveles cargados: ${LEVELS.size} usuarios.`);
+  } catch (error) {
+    console.log('📊 Sin datos de niveles previos.');
+  }
 }
 
 async function grantXp(message) {
@@ -756,6 +904,7 @@ async function grantXp(message) {
   }
 
   LEVELS.set(key, data);
+  saveLevelsDebounced();
 }
 
 async function handleNivel(message, rest) {
@@ -1604,8 +1753,14 @@ async function handleAntiRaid(message, rest) {
   );
 }
 
-client.once('clientReady', () => {
+client.once('clientReady', async () => {
   console.log(`✅ Conectado como ${client.user.tag}`);
+
+  for (const guild of client.guilds.cache.values()) {
+    await applyChannelRestrictions(guild);
+  }
+
+  console.log('🔒 Restricciones de canales aplicadas.');
 });
 
 client.on('messageCreate', async message => {
@@ -1632,7 +1787,7 @@ client.on('messageCreate', async message => {
 
     if (!content.startsWith('!!')) return;
 
-    const commandMatch = /^!!(emoji|sticker|erasechat|ban|kick|timeout|unban|warn|warns|delwarn|purgeusuario|slowmode|lock|unlock|announce|avatar|userinfo|serverinfo|ping|poll|say|8ball|dado|moneda|slap|mute|unmute|vc|antiraid|despedida|nivel|niveles)\b/i.exec(content);
+    const commandMatch = /^!!(emoji|sticker|erasechat|ban|kick|timeout|unban|warn|warns|delwarn|purgeusuario|slowmode|lock|unlock|announce|avatar|userinfo|serverinfo|ping|poll|say|8ball|dado|moneda|slap|mute|unmute|vc|antiraid|despedida|nivel|niveles|help|canales)\b/i.exec(content);
 
     if (!commandMatch) return;
 
@@ -1802,6 +1957,16 @@ client.on('messageCreate', async message => {
 
     if (commandName === 'niveles') {
       await handleNiveles(message);
+      return;
+    }
+
+    if (commandName === 'help') {
+      await handleHelp(message);
+      return;
+    }
+
+    if (commandName === 'canales') {
+      await handleCanales(message);
       return;
     }
 
@@ -2018,6 +2183,8 @@ async function registerCommands() {
 
 (async () => {
   try {
+    loadLevels();
+
     await registerCommands();
     await client.login(process.env.TOKEN);
   } catch (error) {
@@ -2025,3 +2192,13 @@ async function registerCommands() {
     console.error(error);
   }
 })();
+
+process.on('SIGTERM', () => {
+  saveLevels();
+  process.exit(0);
+});
+
+process.on('SIGINT', () => {
+  saveLevels();
+  process.exit(0);
+});
