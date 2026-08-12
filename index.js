@@ -339,20 +339,24 @@ async function prepareSticker(buffer) {
   throw new Error('No pude reducir la imagen al tamaño permitido para un sticker.');
 }
 
+function isImageAttachment(file) {
+  if (!file) return false;
+
+  return (
+    file.contentType?.startsWith('image/') ||
+    /\.(png|jpe?g|gif|webp)$/i.test(file.name || '')
+  );
+}
+
 async function getImageFromMessage(message) {
   if (!message || !message.attachments || message.attachments.size === 0) {
     return null;
   }
 
-  const attachment = message.attachments.find(file =>
-    file.contentType?.startsWith('image/') ||
-    /\.(png|jpe?g|gif|webp)$/i.test(file.name || '')
-  );
-
-  return attachment || null;
+  return message.attachments.find(isImageAttachment) || null;
 }
 
-async function findMessageByAttachmentId(channel, attachmentId) {
+async function findAttachmentById(channel, attachmentId) {
   let before;
 
   for (let batch = 0; batch < 5; batch++) {
@@ -365,21 +369,17 @@ async function findMessageByAttachmentId(channel, attachmentId) {
     if (messages.size === 0) break;
 
     for (const msg of messages.values()) {
-      if (msg.attachments.has(attachmentId)) return msg;
+      if (msg.attachments.has(attachmentId)) {
+        const attachment = msg.attachments.get(attachmentId);
+
+        if (isImageAttachment(attachment)) return attachment;
+      }
     }
 
     before = messages.last().id;
   }
 
   return null;
-}
-
-async function resolveTargetMessage(channel, id) {
-  const message = await channel.messages.fetch(id).catch(() => null);
-
-  if (message) return message;
-
-  return findMessageByAttachmentId(channel, id);
 }
 
 async function resolveImageFromOptions(interaction) {
@@ -395,19 +395,23 @@ async function resolveImageFromOptions(interaction) {
       return { attachment: null, error: '❌ No puedo buscar mensajes en este canal.' };
     }
 
-    const message = await resolveTargetMessage(interaction.channel, messageId);
+    const message = await interaction.channel.messages
+      .fetch(messageId)
+      .catch(() => null);
 
-    if (!message) {
+    let found = null;
+
+    if (message) {
+      found = await getImageFromMessage(message);
+    } else {
+      found = await findAttachmentById(interaction.channel, messageId);
+    }
+
+    if (!found) {
       return {
         attachment: null,
         error: `❌ No encontré un mensaje (o adjunto) con el ID \`${messageId}\` en este canal.`
       };
-    }
-
-    const found = await getImageFromMessage(message);
-
-    if (!found) {
-      return { attachment: null, error: '❌ Ese mensaje no contiene una imagen.' };
     }
 
     return { attachment: found, error: null };
@@ -898,29 +902,37 @@ client.on('messageCreate', async message => {
       );
     }
 
-    let target;
+    let attachment = null;
 
     if (messageId) {
-      target = await resolveTargetMessage(message.channel, messageId);
+      const byMessage = await message.channel.messages
+        .fetch(messageId)
+        .catch(() => null);
 
-      if (!target) {
+      if (byMessage) {
+        attachment = await getImageFromMessage(byMessage);
+      } else {
+        attachment = await findAttachmentById(message.channel, messageId);
+      }
+
+      if (!attachment) {
         return message.reply(
           `❌ No encontré un mensaje (o adjunto) con el ID \`${messageId}\` en este canal.`
         );
       }
     } else if (message.reference) {
-      target = await message.fetchReference().catch(() => null);
+      const target = await message.fetchReference().catch(() => null);
 
       if (!target) {
         return message.reply('❌ No pude obtener el mensaje al que respondiste.');
       }
+
+      attachment = await getImageFromMessage(target);
     } else {
       return message.reply(
         '❌ Responde a un mensaje o pasa el ID del mensaje. Ej: `!!emoji 123456789012345678`'
       );
     }
-
-    const attachment = await getImageFromMessage(target);
 
     if (!attachment) {
       return message.reply('❌ Ese mensaje no contiene una imagen.');
