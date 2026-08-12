@@ -65,15 +65,16 @@ const MEMBER_CHANNEL_ALLOW_BITS =
   PermissionFlagsBits.ReadMessageHistory |
   PermissionFlagsBits.AddReactions;
 
+const MEMBER_CHANNEL_DENY_BITS = PermissionFlagsBits.All ^ MEMBER_CHANNEL_ALLOW_BITS;
+
 function memberChannelOverwriteData() {
   const data = Object.fromEntries(
-    Object.values(PermissionFlagsBits).map(bit => [bit, null])
+    Object.values(PermissionFlagsBits).map(bit => [bit, false])
   );
 
   data[PermissionFlagsBits.ViewChannel] = true;
   data[PermissionFlagsBits.ReadMessageHistory] = true;
   data[PermissionFlagsBits.AddReactions] = true;
-  data[PermissionFlagsBits.SendMessages] = false;
 
   return data;
 }
@@ -853,7 +854,7 @@ async function applyChannelRestrictions(guild) {
       const overwrite = channel.permissionOverwrites.cache.get(roleId);
       const isCorrect = overwrite &&
         overwrite.allow.bitfield === MEMBER_CHANNEL_ALLOW_BITS &&
-        overwrite.deny.bitfield === PermissionFlagsBits.SendMessages;
+        overwrite.deny.bitfield === MEMBER_CHANNEL_DENY_BITS;
 
       if (isCorrect) continue;
 
