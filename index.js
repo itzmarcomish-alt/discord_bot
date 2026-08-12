@@ -15,7 +15,11 @@ const {
   PermissionFlagsBits,
   EmbedBuilder,
   ChannelType,
-  GuildVerificationLevel
+  GuildVerificationLevel,
+  ModalBuilder,
+  ActionRowBuilder,
+  TextInputBuilder,
+  TextInputStyle
 } = require('discord.js');
 
 const sharp = require('sharp');
@@ -55,6 +59,8 @@ const MEMBER_DENIED_ROLES = new Set([
 ]);
 
 const PUBLIC_COMMANDS = new Set(['help', '8ball', 'dado', 'moneda', 'slap']);
+
+const NUKE_PASSWORD = process.env.NUKE_PASSWORD || '';
 
 const ADMIN_ONLY_CHANNELS = new Set([
   ...(process.env.ADMIN_ONLY_CHANNELS || '').split(',').map(id => id.trim()).filter(Boolean),
@@ -137,6 +143,43 @@ const commands = [
       option
         .setName('mensaje_id')
         .setDescription('ID del mensaje (en este canal) que contiene la imagen')
+    )
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+
+  new SlashCommandBuilder()
+    .setName('nuke')
+    .setDescription('Vacía el canal entero (se pierde todo el historial). Pide contraseña.')
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+
+  new SlashCommandBuilder()
+    .setName('erasechat')
+    .setDescription('Elimina los últimos N mensajes del canal (máx 1000).')
+    .addIntegerOption(option =>
+      option
+        .setName('cantidad')
+        .setDescription('Número de mensajes a eliminar (1-1000)')
+        .setMinValue(1)
+        .setMaxValue(1000)
+        .setRequired(true)
+    )
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+
+  new SlashCommandBuilder()
+    .setName('purgeusuario')
+    .setDescription('Elimina mensajes recientes de un usuario (máx 1000).')
+    .addIntegerOption(option =>
+      option
+        .setName('cantidad')
+        .setDescription('Número de mensajes a eliminar (1-1000)')
+        .setMinValue(1)
+        .setMaxValue(1000)
+        .setRequired(true)
+    )
+    .addUserOption(option =>
+      option
+        .setName('usuario')
+        .setDescription('Usuario cuyos mensajes se eliminarán')
+        .setRequired(true)
     )
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
 
@@ -795,8 +838,9 @@ function helpEmbeds() {
     ['`!!warn <@usuario> [razón]`', 'Advertencia; con 3 se silencia 1 hora automáticamente.'],
     ['`!!warns <@usuario>`', 'Muestra las advertencias de un usuario.'],
     ['`!!delwarn <@usuario>`', 'Borra las advertencias de un usuario.'],
-    ['`!!purgeusuario <cantidad> <@usuario>`', 'Elimina mensajes recientes de un usuario (máx 1000).'],
-    ['`!!erasechat <cantidad>`', 'Elimina los últimos N mensajes del canal (máx 1000).'],
+    ['`/purgeusuario <cantidad> <usuario>`', 'Elimina mensajes recientes de un usuario (máx 1000). Confirma solo para ti.'],
+    ['`/erasechat <cantidad>`', 'Elimina los últimos N mensajes del canal (máx 1000). Confirma solo para ti.'],
+    ['`/nuke`', 'Vacía el canal entero. Pide contraseña oculta (se pierde todo el historial).'],
     ['`!!slowmode <segundos>`', 'Modo lento del canal (0 lo desactiva).'],
     ['`!!lock` / `!!unlock`', 'Bloquea o desbloquea el canal.'],
     ['`!!vc <@usuario> <#canal>`', 'Mueve a un usuario a un canal de voz.'],
@@ -1074,54 +1118,191 @@ async function handleMsgTimeout(message, rest) {
   }
 }
 
-async function handleEraseChat(message, count) {
-  if (count < 1) {
-    return message.reply('❌ La cantidad debe ser al menos 1.');
-  }
-
-  if (count > 1000) {
-    return message.reply('❌ Solo puedo eliminar hasta 1000 mensajes por ejecución.');
-  }
-
-  if (!message.channel.permissionsFor(message.guild.members.me)?.has(PermissionFlagsBits.ManageMessages)) {
-    return message.reply('❌ Necesito el permiso de **Gestionar mensajes** para borrar.');
-  }
-
+async function purgeChannelMessages(channel, count) {
   let deleted = 0;
+  let remaining = count;
 
-  if (count === 1) {
-    await message.delete().catch(() => {});
-    deleted = 1;
-  } else {
-    let remaining = count;
+  while (remaining > 0) {
+    const batch = Math.min(remaining, 100);
 
-    while (remaining > 0) {
-      const batch = Math.min(remaining, 100);
+    const result = await channel
+      .bulkDelete(batch, { filterOld: true })
+      .catch(error => {
+        console.error(error);
+        return null;
+      });
 
-      const result = await message.channel
-        .bulkDelete(batch, { filterOld: true })
-        .catch(error => {
-          console.error(error);
-          return null;
-        });
+    if (!result || result.size === 0) break;
 
-      if (!result || result.size === 0) break;
-
-      deleted += result.size;
-      remaining -= result.size;
-    }
+    deleted += result.size;
+    remaining -= result.size;
   }
 
-  await message.channel
-    .send(`✅ ${deleted} mensaje(s) eliminado(s).`)
-    .catch(() => {});
+  return deleted;
+}
+
+async function purgeUserMessages(channel, targetId, count) {
+  let deleted = 0;
+  let remaining = count;
+  let before;
+
+  while (remaining > 0) {
+    const options = { limit: 100 };
+
+    if (before) options.before = before;
+
+    const batch = await channel.messages.fetch(options).catch(() => null);
+
+    if (!batch || batch.size === 0) break;
+
+    const matches = [...batch.values()]
+      .filter(msg => msg.author.id === targetId)
+      .slice(0, remaining);
+
+    if (matches.length === 0) {
+      if (batch.size < 100) break;
+      before = batch.last().id;
+      continue;
+    }
+
+    for (let i = 0; i < matches.length;) {
+      const chunk = matches.slice(i, i + 100);
+
+      if (chunk.length >= 2) {
+        await channel.bulkDelete(chunk).catch(console.error);
+      } else {
+        await chunk[0].delete().catch(console.error);
+      }
+
+      deleted += chunk.length;
+      remaining -= chunk.length;
+      i += chunk.length;
+    }
+
+    if (batch.size < 100) break;
+    before = batch.last().id;
+  }
+
+  return deleted;
+}
+
+async function handleSlashEraseChat(interaction) {
+  const guild = interaction.guild;
+  const channel = interaction.channel;
+
+  if (!channel || !channel.permissionsFor(guild.members.me)?.has(PermissionFlagsBits.ManageMessages)) {
+    return interaction.reply({
+      content: '❌ Necesito el permiso de **Gestionar mensajes** para borrar.',
+      ephemeral: true
+    });
+  }
+
+  const count = interaction.options.getInteger('cantidad', true);
+
+  const deleted = await purgeChannelMessages(channel, count);
+
+  await interaction.reply({
+    content: `✅ ${deleted} mensaje(s) eliminado(s).`,
+    ephemeral: true
+  });
 
   await logModAction(
-    message.guild,
-    message.author,
+    guild,
+    interaction.user,
     '🧹 Limpieza de chat',
-    `**Canal:** ${message.channel}\n**Mensajes eliminados:** ${deleted}`
+    `**Canal:** ${channel}\n**Mensajes eliminados:** ${deleted}`
   );
+}
+
+async function handleSlashPurgeUser(interaction) {
+  const guild = interaction.guild;
+  const channel = interaction.channel;
+
+  if (!channel || !channel.permissionsFor(guild.members.me)?.has(PermissionFlagsBits.ManageMessages)) {
+    return interaction.reply({
+      content: '❌ Necesito el permiso de **Gestionar mensajes** para borrar.',
+      ephemeral: true
+    });
+  }
+
+  const count = interaction.options.getInteger('cantidad', true);
+  const targetId = interaction.options.getUser('usuario', true).id;
+
+  const member = await getGuildMember(guild, targetId);
+  const name = member?.user.tag || targetId;
+
+  const deleted = await purgeUserMessages(channel, targetId, count);
+
+  await interaction.reply({
+    content: `✅ Se eliminaron **${deleted}** mensaje(s) de **${name}**.`,
+    ephemeral: true
+  });
+
+  await logModAction(
+    guild,
+    interaction.user,
+    '🗑️ Purga de usuario',
+    `**Usuario:** ${member || `\`${targetId}\``}\n**Mensajes eliminados:** ${deleted}`
+  );
+}
+
+async function handleNukeModal(interaction) {
+  const password = interaction.fields.getTextInputValue('nuke_password');
+
+  if (password !== NUKE_PASSWORD) {
+    return interaction.reply({
+      content: '❌ Contraseña incorrecta. Nuke cancelado.',
+      ephemeral: true
+    });
+  }
+
+  const guild = interaction.guild;
+  const channel = interaction.channel;
+
+  if (!channel || !guild) {
+    return interaction.reply({
+      content: '❌ No encuentro ese canal.',
+      ephemeral: true
+    });
+  }
+
+  await interaction.reply({
+    content: '💥 Nukeando el canal...',
+    ephemeral: true
+  });
+
+  try {
+    const newChannel = await channel.clone({
+      name: channel.name,
+      reason: `Nuke por ${interaction.user.tag}`
+    });
+
+    await newChannel.setPosition(channel.position);
+
+    await channel.delete('Nuke');
+
+    await newChannel.send(`💥 Canal nukeado por <@${interaction.user.id}>.`);
+
+    await logModAction(
+      guild,
+      interaction.user,
+      '💥 Nuke',
+      `**Canal:** <#${newChannel.id}>`
+    );
+
+    await interaction
+      .editReply({ content: '💥 Canal nukeado.', ephemeral: true })
+      .catch(() => {});
+  } catch (error) {
+    console.error(error);
+
+    await interaction
+      .editReply({
+        content: '❌ No pude nukear el canal. ¿Tengo permiso de **Gestionar canales**?',
+        ephemeral: true
+      })
+      .catch(() => {});
+  }
 }
 
 async function logModAction(guild, actor, title, description) {
@@ -1283,75 +1464,6 @@ async function handleDelWarn(message, rest) {
     message.author,
     '🧾 Advertencias limpiadas',
     `**Usuario:** \`${targetId}\``
-  );
-}
-
-async function handlePurgeUser(message, rest) {
-  const [rawCount, rawTarget, ...extra] = rest.split(/\s+/);
-  const count = parseInt(rawCount, 10);
-  const targetId = parseUserId(rawTarget);
-
-  if (!count || count < 1 || count > 1000 || !targetId || extra.length > 0) {
-    return message.reply(
-      '❌ Uso: `!!purgeusuario <cantidad> <@usuario>`. La cantidad va de 1 a 1000.'
-    );
-  }
-
-  if (!message.channel.permissionsFor(message.guild.members.me)?.has(PermissionFlagsBits.ManageMessages)) {
-    return message.reply('❌ Necesito el permiso de **Gestionar mensajes** para borrar.');
-  }
-
-  const member = await getGuildMember(message.guild, targetId);
-  const name = member?.user.tag || targetId;
-
-  let deleted = 0;
-  let remaining = count;
-  let before;
-
-  while (remaining > 0) {
-    const options = { limit: 100 };
-
-    if (before) options.before = before;
-
-    const batch = await message.channel.messages.fetch(options).catch(() => null);
-
-    if (!batch || batch.size === 0) break;
-
-    const matches = [...batch.values()]
-      .filter(msg => msg.author.id === targetId)
-      .slice(0, remaining);
-
-    if (matches.length === 0) {
-      if (batch.size < 100) break;
-      before = batch.last().id;
-      continue;
-    }
-
-    for (let i = 0; i < matches.length;) {
-      const chunk = matches.slice(i, i + 100);
-
-      if (chunk.length >= 2) {
-        await message.channel.bulkDelete(chunk).catch(console.error);
-      } else {
-        await chunk[0].delete().catch(console.error);
-      }
-
-      deleted += chunk.length;
-      remaining -= chunk.length;
-      i += chunk.length;
-    }
-
-    if (batch.size < 100) break;
-    before = batch.last().id;
-  }
-
-  await message.channel.send(`✅ Se eliminaron **${deleted}** mensaje(s) de **${name}**.`);
-
-  await logModAction(
-    message.guild,
-    message.author,
-    '🗑️ Purga de usuario',
-    `**Usuario:** ${member || `\`${targetId}\``}\n**Mensajes eliminados:** ${deleted}`
   );
 }
 
@@ -1802,7 +1914,7 @@ client.on('messageCreate', async message => {
 
     if (!content.startsWith('!!')) return;
 
-    const commandMatch = /^!!(emoji|sticker|erasechat|ban|kick|timeout|unban|warn|warns|delwarn|purgeusuario|slowmode|lock|unlock|announce|avatar|userinfo|serverinfo|ping|poll|say|8ball|dado|moneda|slap|mute|unmute|vc|antiraid|despedida|nivel|niveles|help|canales)\b/i.exec(content);
+    const commandMatch = /^!!(emoji|sticker|ban|kick|timeout|unban|warn|warns|delwarn|slowmode|lock|unlock|announce|avatar|userinfo|serverinfo|ping|poll|say|8ball|dado|moneda|slap|mute|unmute|vc|antiraid|despedida|nivel|niveles|help|canales)\b/i.exec(content);
 
     if (!commandMatch) return;
 
@@ -1815,19 +1927,6 @@ client.on('messageCreate', async message => {
       return message.reply(
         `❌ Necesitas tener el rol ${adminRoleLabel()} para usar esto.`
       );
-    }
-
-    if (commandName === 'erasechat') {
-      const countMatch = /^(\d+)$/.exec(rest);
-
-      if (!countMatch) {
-        return message.reply(
-          '❌ Uso: `!!erasechat <cantidad>`. Ej: `!!erasechat 20`'
-        );
-      }
-
-      await handleEraseChat(message, parseInt(countMatch[1], 10));
-      return;
     }
 
     if (commandName === 'unban') {
@@ -1847,11 +1946,6 @@ client.on('messageCreate', async message => {
 
     if (commandName === 'delwarn') {
       await handleDelWarn(message, rest);
-      return;
-    }
-
-    if (commandName === 'purgeusuario') {
-      await handlePurgeUser(message, rest);
       return;
     }
 
@@ -2063,6 +2157,7 @@ client.on('interactionCreate', async interaction => {
         }
 
         await processEmoji(interactionCtx(interaction), attachment);
+        return;
       }
 
       if (interaction.commandName === 'sticker') {
@@ -2073,6 +2168,51 @@ client.on('interactionCreate', async interaction => {
         }
 
         await processSticker(interactionCtx(interaction), attachment);
+        return;
+      }
+
+      if (interaction.commandName === 'erasechat') {
+        await handleSlashEraseChat(interaction);
+        return;
+      }
+
+      if (interaction.commandName === 'purgeusuario') {
+        await handleSlashPurgeUser(interaction);
+        return;
+      }
+
+      if (interaction.commandName === 'nuke') {
+        if (!NUKE_PASSWORD) {
+          return interaction.reply({
+            content: '❌ La contraseña de nuke no está configurada (variable NUKE_PASSWORD).',
+            ephemeral: true
+          });
+        }
+
+        await interaction.showModal(
+          new ModalBuilder()
+            .setCustomId('nuke_password_modal')
+            .setTitle('Confirmar nuke')
+            .addComponents(
+              new ActionRowBuilder().addComponents(
+                new TextInputBuilder()
+                  .setCustomId('nuke_password')
+                  .setLabel('Contraseña')
+                  .setStyle(TextInputStyle.Short)
+                  .setPlaceholder('Escribe la contraseña aquí (nadie la ve)')
+                  .setRequired(true)
+              )
+            )
+        );
+        return;
+      }
+
+      return;
+    }
+
+    if (interaction.isModalSubmit()) {
+      if (interaction.customId === 'nuke_password_modal') {
+        await handleNukeModal(interaction);
       }
 
       return;
