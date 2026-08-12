@@ -60,6 +60,24 @@ const MEMBER_DENIED_ROLES = new Set([
   '1536886178094252112'
 ]);
 
+const MEMBER_CHANNEL_ALLOW_BITS =
+  PermissionFlagsBits.ViewChannel |
+  PermissionFlagsBits.ReadMessageHistory |
+  PermissionFlagsBits.AddReactions;
+
+function memberChannelOverwriteData() {
+  const data = Object.fromEntries(
+    Object.values(PermissionFlagsBits).map(bit => [bit, null])
+  );
+
+  data[PermissionFlagsBits.ViewChannel] = true;
+  data[PermissionFlagsBits.ReadMessageHistory] = true;
+  data[PermissionFlagsBits.AddReactions] = true;
+  data[PermissionFlagsBits.SendMessages] = false;
+
+  return data;
+}
+
 const PUBLIC_COMMANDS = new Set([
   'help', '8ball', 'dado', 'moneda', 'slap',
   'emoji', 'sticker', 'avatar', 'userinfo', 'serverinfo', 'ping',
@@ -826,7 +844,7 @@ async function applyChannelRestrictions(guild) {
         .catch(console.error);
     }
 
-    // Los roles de miembro siguen viendo el canal y leyendo el historial
+    // Los roles de miembro solo ven, reaccionan y leen el historial: nada más
     for (const roleId of MEMBER_DENIED_ROLES) {
       const role = guild.roles.cache.get(roleId);
 
@@ -834,13 +852,13 @@ async function applyChannelRestrictions(guild) {
 
       const overwrite = channel.permissionOverwrites.cache.get(roleId);
       const isCorrect = overwrite &&
-        overwrite.allow.has(PermissionFlagsBits.ViewChannel) &&
-        overwrite.allow.has(PermissionFlagsBits.ReadMessageHistory);
+        overwrite.allow.bitfield === MEMBER_CHANNEL_ALLOW_BITS &&
+        overwrite.deny.bitfield === PermissionFlagsBits.SendMessages;
 
       if (isCorrect) continue;
 
       await channel.permissionOverwrites
-        .edit(role, { ViewChannel: true, ReadMessageHistory: true })
+        .edit(role, memberChannelOverwriteData())
         .catch(console.error);
     }
   }
