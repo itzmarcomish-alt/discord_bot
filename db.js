@@ -10,6 +10,9 @@ if (process.env.DATABASE_URL) {
     connectionString: process.env.DATABASE_URL,
     ssl: { rejectUnauthorized: false }
   });
+  pool.on('error', (err) => {
+    console.error('Error de conexión con la BD (el pool se recupera solo):', err.message);
+  });
 }
 
 const FILE = path.join(__dirname, 'levels.json');
