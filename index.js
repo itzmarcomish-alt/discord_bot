@@ -256,7 +256,7 @@ const STRONG_SCAM_KEYWORDS = [
 const WEAK_SCAM_KEYWORDS = [
   'giveaway', 'sorteo', 'wallet', 'usdt', 'crypto', 'bitcoin',
   'bonus', 'reward', 'recompensa', 'congratulations', 'limited time',
-  'tiempo limitado', 'last chance', 'ultima oportunidad', 'deposit',
+  'tiempo limitado', 'last chance', 'ultima oportunidad',
   'btc', 'premio', 'prize'
 ];
 
