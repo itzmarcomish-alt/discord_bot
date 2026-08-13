@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: discord-bot
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: node index.js
+    healthCheckPath: /
+    envVars:
+      - key: TOKEN
+        sync: false
+      - key: CLIENT_ID
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: NUKE_PASSWORD
+        sync: false
+      - key: CUSTOM_ROLE_PRICE
+        value: 2000
