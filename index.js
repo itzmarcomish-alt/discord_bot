@@ -50,6 +50,7 @@ const ADMIN_ROLE_NAME = process.env.ADMIN_ROLE_NAME || 'Admin';
 const ADMIN_ROLE_IDS = new Set(
   (process.env.ADMIN_ROLE_IDS || '').split(',').map(id => id.trim()).filter(Boolean)
 );
+const BANK_ADMIN_ROLE_ID = process.env.BANK_ADMIN_ROLE_ID || '1536973260896473109';
 const MODLOG_CHANNEL_ID = process.env.MODLOG_CHANNEL_ID || '';
 const WELCOME_CHANNEL_ID = process.env.WELCOME_CHANNEL_ID || '';
 const SCAM_EXCLUDED_CHANNELS = new Set(
@@ -354,6 +355,11 @@ function isAdmin(member) {
   return member.roles.cache.some(
     role => role.name === ADMIN_ROLE_NAME || ADMIN_ROLE_IDS.has(role.id)
   );
+}
+
+function isBankAdmin(member) {
+  if (!member || !member.roles) return false;
+  return member.roles.cache.has(BANK_ADMIN_ROLE_ID);
 }
 
 function parseDuration(value) {
@@ -1032,7 +1038,7 @@ function helpEmbeds(includeModeration) {
     ['`!!vc <@usuario> <#canal>`', 'Mueve a un usuario a un canal de voz.'],
     ['`!!antiraid` / `!!antiraid off`', 'Estado del anti-raid o lo desactiva.'],
     ['`!!setnivel <@usuario> <nivel>`', 'Fija el nivel de un usuario (asigna el rol en su próximo mensaje).'],
-    ['`!!setcoins <@usuario> <cantidad>`', 'Fija las monedas de un usuario.']
+    ['`!!setcoins <@usuario> <cantidad> [banco]`', 'Fija las monedas de un usuario (agrega `banco` para el banco).']
   ];
 
   const utilities = [
@@ -1833,27 +1839,35 @@ async function handleSetNivel(message, rest) {
 }
 
 async function handleSetCoins(message, rest) {
-  const [rawTarget, rawAmount] = rest.split(/\s+/);
+  const [rawTarget, rawAmount, where] = rest.split(/\s+/);
   const targetId = parseUserId(rawTarget);
   const amount = parseInt(rawAmount, 10);
 
   if (!targetId || !Number.isFinite(amount) || amount < 0) {
-    return message.reply('❌ Uso: `!!setcoins <@usuario> <cantidad>`');
+    return message.reply('❌ Uso: `!!setcoins <@usuario> <cantidad> [banco]`');
   }
 
   const data = getEco(message.guild.id, targetId);
+  const toBank = (where || '').toLowerCase() === 'banco';
 
-  data.coins = amount;
+  if (toBank) {
+    data.bank = amount;
+  } else {
+    data.coins = amount;
+  }
+
   economyBucket.map.set(`${message.guild.id}:${targetId}`, data);
   economyBucket.debounce();
 
-  await message.reply(`💰 **<@${targetId}>** ahora tiene **${amount}** monedas.`);
+  await message.reply(
+    `💰 **<@${targetId}>** ahora tiene **${amount}** monedas en ${toBank ? 'el banco' : 'su billetera'}.`
+  );
 
   await logModAction(
     message.guild,
     message.author,
     '💰 Monedas ajustadas',
-    `**Usuario:** <@${targetId}>\n**Monedas:** ${amount}`
+    `**Usuario:** <@${targetId}>\n**Monedas:** ${amount} (${toBank ? 'banco' : 'billetera'})`
   );
 }
 
@@ -3411,7 +3425,11 @@ client.on('messageCreate', async message => {
       return;
     }
 
-    if (!PUBLIC_COMMANDS.has(commandName) && !isAdmin(message.member)) {
+    if (commandName === 'setcoins') {
+      if (!isBankAdmin(message.member)) {
+        return message.reply('❌ Solo el rol de administrador del banco puede modificar monedas.');
+      }
+    } else if (!PUBLIC_COMMANDS.has(commandName) && !isAdmin(message.member)) {
       return message.reply(
         `❌ Debes ser admin para usar este comando.`
       );
