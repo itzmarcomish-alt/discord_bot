@@ -3396,7 +3396,7 @@ client.on('messageCreate', async message => {
 
     if (!content.startsWith('!!')) return;
 
-    const commandMatch = /^!!(emoji|sticker|ban|kick|timeout|unban|warn|warns|delwarn|slowmode|lock|unlock|announce|avatar|userinfo|serverinfo|ping|poll|say|8ball|dado|moneda|slap|quote|firma|polaroid|wanted|logro|mute|unmute|vc|antiraid|despedida|nivel|niveles|help|canales|afk|bal|daily|trabajar|shop|comprar|comprarrol|apostar|robar|cazar|duelo|racha|cumple|stats|reactionroles|setnivel|setcoins|banco|depositar|retirar|transferir)\b/i.exec(content);
+    const commandMatch = /^!!(emoji|sticker|ban|kick|timeout|unban|warn|warns|delwarn|slowmode|lock|unlock|announce|avatar|userinfo|serverinfo|ping|poll|say|8ball|dado|moneda|slap|quote|firma|polaroid|wanted|logro|mute|unmute|vc|antiraid|despedida|nivel|niveles|help|canales|afk|bal|daily|trabajar|shop|comprar|comprarrol|apostar|robar|cazar|duelo|racha|cumple|stats|reactionroles|setnivel|setcoins|banco|depositar|retirar|transferir|pene)\b/i.exec(content);
 
     if (!commandMatch) return;
 
@@ -3404,6 +3404,10 @@ client.on('messageCreate', async message => {
     const rest = content.slice(commandMatch[0].length).trim();
 
     if (!message.guild) return;
+
+    if (commandName === 'pene') {
+      return message.reply('comes');
+    }
 
     if (!PUBLIC_COMMANDS.has(commandName) && !isAdmin(message.member)) {
       return message.reply(
