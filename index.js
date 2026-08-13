@@ -35,8 +35,7 @@ const client = new Client({
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent,
     GatewayIntentBits.GuildMessageReactions,
-    GatewayIntentBits.GuildVoiceStates,
-    ...(process.env.WELCOME_CHANNEL_ID ? [GatewayIntentBits.GuildMembers] : [])
+    GatewayIntentBits.GuildVoiceStates
   ],
   partials: [
     Partials.Message,
@@ -166,6 +165,7 @@ const birthdaysBucket = createBucket('birthdays');
 const reactionRolesBucket = createBucket('reactionroles');
 const customRolesBucket = createBucket('customroles');
 const shopRolesBucket = createBucket('shoproles');
+const warningsBucket = createBucket('warnings');
 
 const voiceSessions = new Map();
 
@@ -261,7 +261,6 @@ const WEAK_SCAM_KEYWORDS = [
 
 const imagePosts = new Map();
 const seenUsers = new Map();
-const warnings = new Map();
 const WARN_TIMEOUT_THRESHOLD = 3;
 let warnedEmptyContent = false;
 
@@ -1025,7 +1024,9 @@ function helpEmbeds(includeModeration) {
     ['`!!slowmode <segundos>`', 'Modo lento del canal (0 lo desactiva).'],
     ['`!!lock` / `!!unlock`', 'Bloquea o desbloquea el canal.'],
     ['`!!vc <@usuario> <#canal>`', 'Mueve a un usuario a un canal de voz.'],
-    ['`!!antiraid` / `!!antiraid off`', 'Estado del anti-raid o lo desactiva.']
+    ['`!!antiraid` / `!!antiraid off`', 'Estado del anti-raid o lo desactiva.'],
+    ['`!!setnivel <@usuario> <nivel>`', 'Fija el nivel de un usuario (asigna el rol en su próximo mensaje).'],
+    ['`!!setcoins <@usuario> <cantidad>`', 'Fija las monedas de un usuario.']
   ];
 
   const utilities = [
@@ -1621,15 +1622,18 @@ async function handleComprarRol(message, rest) {
   }
 
   const name = sanitizeRoleName(rawName);
-  const coins = getEco(message.guild.id, message.author.id).coins || 0;
-
-  if (coins < CUSTOM_ROLE_PRICE) {
-    return message.reply(`❌ Te faltan **${CUSTOM_ROLE_PRICE - coins}** monedas para tu rol personalizado.`);
-  }
 
   const key = `${message.guild.id}:${message.author.id}`;
   const existingRoleId = customRolesBucket.map.get(key);
   const existingRole = existingRoleId ? message.guild.roles.cache.get(existingRoleId) : null;
+
+  if (!existingRole) {
+    const coins = getEco(message.guild.id, message.author.id).coins || 0;
+
+    if (coins < CUSTOM_ROLE_PRICE) {
+      return message.reply(`❌ Te faltan **${CUSTOM_ROLE_PRICE - coins}** monedas para tu rol personalizado.`);
+    }
+  }
 
   let role;
 
@@ -1664,13 +1668,67 @@ async function handleComprarRol(message, rest) {
   customRolesBucket.map.set(key, role.id);
   customRolesBucket.debounce();
 
-  addCoins(message.guild.id, message.author.id, -CUSTOM_ROLE_PRICE);
+  if (!existingRole) {
+    addCoins(message.guild.id, message.author.id, -CUSTOM_ROLE_PRICE);
+  }
 
   const colorHex = '#' + (role.color || 0).toString(16).padStart(6, '0');
 
   await message.reply(
     `✅ Tu rol personalizado **${role.name}** (${colorHex}) está listo. ` +
     `Cambia nombre o color cuando quieras con \`!!comprarrol\`. Te quedan **${getEco(message.guild.id, message.author.id).coins}** monedas.`
+  );
+}
+
+async function handleSetNivel(message, rest) {
+  const [rawTarget, rawLevel] = rest.split(/\s+/);
+  const targetId = parseUserId(rawTarget);
+  const level = parseInt(rawLevel, 10);
+
+  if (!targetId || !Number.isFinite(level) || level < 1) {
+    return message.reply('❌ Uso: `!!setnivel <@usuario> <nivel>`');
+  }
+
+  const xp = 25 * level * (level - 1);
+
+  LEVELS.set(`${message.guild.id}:${targetId}`, { xp, level: Math.max(1, level - 1) });
+  saveLevelsDebounced();
+
+  await message.reply(
+    `🎚️ **<@${targetId}>** fijado al **nivel ${level}** (${xp} XP). ` +
+    `Su rol de nivel se asignará en su próximo mensaje.`
+  );
+
+  await logModAction(
+    message.guild,
+    message.author,
+    '🎚️ Nivel ajustado',
+    `**Usuario:** <@${targetId}>\n**Nivel:** ${level}`
+  );
+}
+
+async function handleSetCoins(message, rest) {
+  const [rawTarget, rawAmount] = rest.split(/\s+/);
+  const targetId = parseUserId(rawTarget);
+  const amount = parseInt(rawAmount, 10);
+
+  if (!targetId || !Number.isFinite(amount) || amount < 0) {
+    return message.reply('❌ Uso: `!!setcoins <@usuario> <cantidad>`');
+  }
+
+  const data = getEco(message.guild.id, targetId);
+
+  data.coins = amount;
+  economyBucket.map.set(`${message.guild.id}:${targetId}`, data);
+  economyBucket.debounce();
+
+  await message.reply(`💰 **<@${targetId}>** ahora tiene **${amount}** monedas.`);
+
+  await logModAction(
+    message.guild,
+    message.author,
+    '💰 Monedas ajustadas',
+    `**Usuario:** <@${targetId}>\n**Monedas:** ${amount}`
   );
 }
 
@@ -2372,7 +2430,7 @@ function parseUserId(input) {
 }
 
 function getWarns(guildId, userId) {
-  return warnings.get(`${guildId}:${userId}`) || [];
+  return warningsBucket.map.get(`${guildId}:${userId}`) || [];
 }
 
 function addWarn(guildId, userId, reason, by) {
@@ -2380,13 +2438,15 @@ function addWarn(guildId, userId, reason, by) {
   const list = getWarns(guildId, userId);
 
   list.push({ reason, by, at: new Date() });
-  warnings.set(key, list);
+  warningsBucket.map.set(key, list);
+  warningsBucket.debounce();
 
   return list;
 }
 
 function clearWarns(guildId, userId) {
-  warnings.delete(`${guildId}:${userId}`);
+  warningsBucket.map.delete(`${guildId}:${userId}`);
+  warningsBucket.debounce();
 }
 
 async function handleUnban(message, rest) {
@@ -2485,7 +2545,7 @@ async function handleWarns(message, rest) {
   }
 
   const lines = warns.map((w, i) =>
-    `${i + 1}. ${w.reason} — ${w.at.toLocaleString()} (por ${w.by})`
+    `${i + 1}. ${w.reason} — ${new Date(w.at).toLocaleString()} (por ${w.by})`
   );
 
   await message.reply(`**Advertencias de ${name}:**\n${lines.join('\n')}`);
@@ -3053,6 +3113,23 @@ async function handleDespedida(message, rest) {
   );
 }
 
+async function disableRaidMode(guild) {
+  raidModeGuilds.delete(guild.id);
+  raidJoins.delete(guild.id);
+
+  await guild.setVerificationLevel(GuildVerificationLevel.None).catch(() => {});
+
+  for (const channel of guild.channels.cache.values()) {
+    if (channel.isTextBased()) {
+      await channel.permissionOverwrites
+        .edit(guild.roles.everyone, { SendMessages: true })
+        .catch(() => {});
+    }
+  }
+
+  await applyChannelRestrictions(guild);
+}
+
 async function triggerRaidMode(guild) {
   raidModeGuilds.add(guild.id);
 
@@ -3074,25 +3151,14 @@ async function triggerRaidMode(guild) {
     'Verificación en **Alta** y canales bloqueados. Usa `!!antiraid off` para desactivar.'
   );
 
-  setTimeout(() => raidModeGuilds.delete(guild.id), RAID_COOLDOWN_MS);
+  setTimeout(() => disableRaidMode(guild), RAID_COOLDOWN_MS);
 }
 
 async function handleAntiRaid(message, rest) {
   const arg = rest.trim().toLowerCase();
 
   if (arg === 'off') {
-    raidModeGuilds.delete(message.guild.id);
-    raidJoins.delete(message.guild.id);
-
-    await message.guild.setVerificationLevel(GuildVerificationLevel.None).catch(() => {});
-
-    for (const channel of message.guild.channels.cache.values()) {
-      if (channel.isTextBased()) {
-        await channel.permissionOverwrites
-          .edit(message.guild.roles.everyone, { SendMessages: true })
-          .catch(() => {});
-      }
-    }
+    await disableRaidMode(message.guild);
 
     await message.channel.send('✅ Anti-raid desactivado y canales restaurados.');
 
@@ -3198,7 +3264,7 @@ client.on('messageCreate', async message => {
 
     if (!content.startsWith('!!')) return;
 
-    const commandMatch = /^!!(emoji|sticker|ban|kick|timeout|unban|warn|warns|delwarn|slowmode|lock|unlock|announce|avatar|userinfo|serverinfo|ping|poll|say|8ball|dado|moneda|slap|quote|firma|polaroid|wanted|logro|mute|unmute|vc|antiraid|despedida|nivel|niveles|help|canales|afk|bal|daily|trabajar|shop|comprar|comprarrol|apostar|robar|cazar|duelo|racha|cumple|stats|reactionroles)\b/i.exec(content);
+    const commandMatch = /^!!(emoji|sticker|ban|kick|timeout|unban|warn|warns|delwarn|slowmode|lock|unlock|announce|avatar|userinfo|serverinfo|ping|poll|say|8ball|dado|moneda|slap|quote|firma|polaroid|wanted|logro|mute|unmute|vc|antiraid|despedida|nivel|niveles|help|canales|afk|bal|daily|trabajar|shop|comprar|comprarrol|apostar|robar|cazar|duelo|racha|cumple|stats|reactionroles|setnivel|setcoins)\b/i.exec(content);
 
     if (!commandMatch) return;
 
@@ -3460,6 +3526,16 @@ client.on('messageCreate', async message => {
 
     if (commandName === 'reactionroles') {
       await handleReactionRoles(message, rest);
+      return;
+    }
+
+    if (commandName === 'setnivel') {
+      await handleSetNivel(message, rest);
+      return;
+    }
+
+    if (commandName === 'setcoins') {
+      await handleSetCoins(message, rest);
       return;
     }
 
@@ -3795,7 +3871,8 @@ async function registerCommands() {
       birthdaysBucket.init(),
       reactionRolesBucket.init(),
       customRolesBucket.init(),
-      shopRolesBucket.init()
+      shopRolesBucket.init(),
+      warningsBucket.init()
     ]);
 
     await registerCommands();
@@ -3815,7 +3892,8 @@ async function saveAllBuckets() {
     birthdaysBucket.save(),
     reactionRolesBucket.save(),
     customRolesBucket.save(),
-    shopRolesBucket.save()
+    shopRolesBucket.save(),
+    warningsBucket.save()
   ]);
 }
 
