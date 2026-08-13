@@ -566,6 +566,50 @@ async function createGoodbyeImage(avatarUrl, username, serverName) {
   return sharp(Buffer.from(svg)).png().toBuffer();
 }
 
+async function createStatsImage(username, level, xpIntoLevel, xpToNext, messages, coins, streak, vcMinutes, last7) {
+  const W = 800;
+  const H = 300;
+  const cx = W / 2;
+  const safe = sanitize(username, 24);
+  const progress = xpToNext > 0 ? Math.min(1, xpIntoLevel / xpToNext) : 0;
+  const barW = 420;
+  const barH = 24;
+  const barX = (W - barW) / 2;
+  const barY = 120;
+
+  const chartX = 60;
+  const chartW = W - 120;
+  const chartBottom = 250;
+  const chartH = chartBottom - 165;
+  const max = Math.max(1, ...(last7 || []).map(d => d.count || 0));
+  const n = last7 ? last7.length : 7;
+  const slot = chartW / n;
+  const barMaxW = Math.round(slot * 0.6);
+
+  const bars = (last7 || []).map((d, i) => {
+    const h = Math.max(2, Math.round(((d.count || 0) / max) * chartH));
+    const bx = chartX + slot * i + (slot - barMaxW) / 2;
+    const by = chartBottom - h;
+
+    return '<rect x="' + bx + '" y="' + by + '" width="' + barMaxW + '" height="' + h + '" fill="#ffce54" rx="4"/>' +
+      '<text x="' + (bx + barMaxW / 2) + '" y="' + (by - 8) + '" text-anchor="middle" font-family="Arial, sans-serif" font-size="14" fill="#ffffff">' + (d.count || 0) + '</text>' +
+      '<text x="' + (bx + barMaxW / 2) + '" y="' + (chartBottom + 18) + '" text-anchor="middle" font-family="Arial, sans-serif" font-size="13" fill="#aaaaaa">' + escapeXml(d.label || '') + '</text>';
+  }).join('');
+
+  const svg = svgDoc(W, H,
+    '<rect width="' + W + '" height="' + H + '" fill="#1b1b3a"/>' +
+    '<rect x="10" y="10" width="' + (W - 20) + '" height="' + (H - 20) + '" fill="none" stroke="#ffce54" stroke-width="2"/>' +
+    '<text x="' + cx + '" y="52" text-anchor="middle" font-family="Luckiest Guy" font-size="34" fill="#ffce54">' + escapeXml(safe) + '</text>' +
+    '<text x="' + cx + '" y="84" text-anchor="middle" font-family="Arial, sans-serif" font-size="18" fill="#ffffff">Nivel ' + level + ' · ' + messages + ' mensajes · ' + coins + ' monedas · racha ' + streak + ' días · ' + vcMinutes + ' min en voz</text>' +
+    '<rect x="' + barX + '" y="' + barY + '" width="' + barW + '" height="' + barH + '" rx="' + (barH / 2) + '" fill="#2b1055"/>' +
+    '<rect x="' + barX + '" y="' + barY + '" width="' + Math.round(barW * progress) + '" height="' + barH + '" rx="' + (barH / 2) + '" fill="#ffce54"/>' +
+    '<text x="' + cx + '" y="' + (barY + barH + 20) + '" text-anchor="middle" font-family="Arial, sans-serif" font-size="14" fill="#dddddd">' + xpIntoLevel + ' / ' + xpToNext + ' XP</text>' +
+    bars
+  , true);
+
+  return sharp(Buffer.from(svg)).png().toBuffer();
+}
+
 async function createAchievementImage(text) {
   const W = 640;
   const H = 320;
@@ -598,4 +642,5 @@ module.exports = {
   createAchievementImage,
   createWelcomeImage,
   createGoodbyeImage,
+  createStatsImage,
 };

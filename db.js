@@ -57,4 +57,79 @@ async function save(entries) {
   fs.writeFileSync(FILE, JSON.stringify(entries));
 }
 
-module.exports = { load, save };
+let kvReady = false;
+
+async function ensureKvTable() {
+  if (!pool || kvReady) return;
+  await pool.query(`CREATE TABLE IF NOT EXISTS kv (
+    bucket TEXT NOT NULL,
+    key TEXT NOT NULL,
+    value TEXT NOT NULL,
+    PRIMARY KEY (bucket, key)
+  )`);
+  kvReady = true;
+}
+
+function kvFile(bucket) {
+  return path.join(__dirname, bucket + '.json');
+}
+
+async function loadJson(bucket) {
+  if (pool) {
+    await ensureKvTable();
+    const { rows } = await pool.query('SELECT key, value FROM kv WHERE bucket = $1', [bucket]);
+    const out = {};
+
+    for (const row of rows) {
+      try {
+        out[row.key] = JSON.parse(row.value);
+      } catch {
+        // valor corrupto, se ignora
+      }
+    }
+
+    return out;
+  }
+
+  try {
+    return JSON.parse(fs.readFileSync(kvFile(bucket), 'utf8'));
+  } catch {
+    return {};
+  }
+}
+
+async function saveJson(bucket, entries) {
+  entries = entries || {};
+
+  if (pool) {
+    await ensureKvTable();
+    const values = Object.entries(entries);
+
+    const conn = await pool.connect();
+
+    try {
+      await conn.query('BEGIN');
+      await conn.query('DELETE FROM kv WHERE bucket = $1', [bucket]);
+
+      for (const [key, value] of values) {
+        await conn.query(
+          'INSERT INTO kv (bucket, key, value) VALUES ($1, $2, $3)',
+          [bucket, key, JSON.stringify(value)]
+        );
+      }
+
+      await conn.query('COMMIT');
+    } catch (error) {
+      await conn.query('ROLLBACK');
+      throw error;
+    } finally {
+      conn.release();
+    }
+
+    return;
+  }
+
+  fs.writeFileSync(kvFile(bucket), JSON.stringify(entries));
+}
+
+module.exports = { load, save, loadJson, saveJson };

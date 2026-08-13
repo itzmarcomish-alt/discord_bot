@@ -3,3 +3,9 @@ node_modules/
 bot.log
 npm-debug.log*
 levels.json
+economy.json
+stats.json
+afk.json
+birthdays.json
+reactionroles.json
+customroles.json

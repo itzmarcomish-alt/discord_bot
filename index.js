@@ -19,7 +19,8 @@ const {
   ModalBuilder,
   ActionRowBuilder,
   TextInputBuilder,
-  TextInputStyle
+  TextInputStyle,
+  Partials
 } = require('discord.js');
 
 const sharp = require('sharp');
@@ -33,7 +34,16 @@ const client = new Client({
     GatewayIntentBits.GuildMembers,
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent,
+    GatewayIntentBits.GuildMessageReactions,
+    GatewayIntentBits.GuildVoiceStates,
     ...(process.env.WELCOME_CHANNEL_ID ? [GatewayIntentBits.GuildMembers] : [])
+  ],
+  partials: [
+    Partials.Message,
+    Partials.Channel,
+    Partials.Reaction,
+    Partials.User,
+    Partials.GuildMember
   ]
 });
 
@@ -55,6 +65,90 @@ let leaveMessageOverride = null;
 
 const LEVEL_CHANNEL_ID = process.env.LEVEL_CHANNEL_ID || '1536991424032014428';
 const LEVELS = new Map();
+
+const BIRTHDAY_CHANNEL_ID = process.env.BIRTHDAY_CHANNEL_ID || '1537276322471088238';
+
+const SHOP_ITEMS = (process.env.SHOP_ITEMS || '')
+  .split('|')
+  .map(item => {
+    const [name, roleId, price] = item.split(':').map(part => part.trim());
+    return name && roleId && /^\d+$/.test(price) ? { name, roleId, price: parseInt(price, 10) } : null;
+  })
+  .filter(Boolean);
+
+const CUSTOM_ROLE_PRICE = parseInt(process.env.CUSTOM_ROLE_PRICE, 10) || 500;
+
+const ROLE_COLOR_NAMES = {
+  rojo: 0xe74c3c,
+  azul: 0x3498db,
+  verde: 0x2ecc71,
+  morado: 0x9b59b6,
+  rosa: 0xe91e63,
+  naranja: 0xe67e22,
+  amarillo: 0xf1c40f,
+  blanco: 0xffffff,
+  negro: 0x2c3e50,
+  cyan: 0x1abc9c,
+  gris: 0x95a5a6,
+  turquesa: 0x1abc9c
+};
+
+const LEVEL_ROLES = new Map(
+  (process.env.LEVEL_ROLES || '')
+    .split(',')
+    .map(pair => {
+      const [level, roleId] = pair.split(':').map(part => part.trim());
+      return level && /^\d+$/.test(level) && /^\d+$/.test(roleId || '')
+        ? [parseInt(level, 10), roleId]
+        : null;
+    })
+    .filter(Boolean)
+);
+
+function createBucket(name) {
+  const map = new Map();
+  let timer = null;
+
+  async function save() {
+    try {
+      await storage.saveJson(name, Object.fromEntries(map));
+    } catch (error) {
+      console.error(`No pude guardar ${name}:`, error);
+    }
+  }
+
+  function debounce() {
+    clearTimeout(timer);
+    timer = setTimeout(save, 5000);
+  }
+
+  async function init() {
+    try {
+      const data = await storage.loadJson(name);
+
+      map.clear();
+
+      for (const [key, value] of Object.entries(data)) {
+        map.set(key, value);
+      }
+
+      console.log(`📦 ${name} cargados: ${map.size}.`);
+    } catch (error) {
+      console.log(`📦 Sin datos previos de ${name}.`);
+    }
+  }
+
+  return { map, save, debounce, init };
+}
+
+const economyBucket = createBucket('economy');
+const statsBucket = createBucket('stats');
+const afkBucket = createBucket('afk');
+const birthdaysBucket = createBucket('birthdays');
+const reactionRolesBucket = createBucket('reactionroles');
+const customRolesBucket = createBucket('customroles');
+
+const voiceSessions = new Map();
 
 const MEMBER_DENIED_ROLES = new Set([
   ...(process.env.MEMBER_DENIED_ROLES || '').split(',').map(id => id.trim()).filter(Boolean),
@@ -87,10 +181,12 @@ function memberChannelOverwriteData() {
 const PUBLIC_COMMANDS = new Set([
   'help', '8ball', 'dado', 'moneda', 'slap', 'quote', 'firma', 'polaroid', 'wanted', 'logro',
   'avatar', 'userinfo', 'serverinfo', 'ping',
-  'poll', 'say', 'nivel', 'niveles'
+  'poll', 'say', 'nivel', 'niveles',
+  'afk', 'bal', 'daily', 'trabajar', 'shop', 'comprar', 'comprarrol', 'apostar',
+  'robar', 'cazar', 'duelo', 'racha', 'cumple', 'stats'
 ]);
 
-const ADMIN_UTILITY_KEYWORDS = new Set(['emoji', 'sticker', 'announce', 'despedida', 'canales']);
+const ADMIN_UTILITY_KEYWORDS = new Set(['emoji', 'sticker', 'announce', 'despedida', 'canales', 'reactionroles']);
 
 const NUKE_PASSWORD = process.env.NUKE_PASSWORD || '';
 
@@ -99,7 +195,8 @@ const ADMIN_ONLY_CHANNELS = new Set([
   ...(MODLOG_CHANNEL_ID ? [MODLOG_CHANNEL_ID] : []),
   '1536881063580667934',
   '1536992463875735663',
-  '1536991424032014428'
+  '1536991424032014428',
+  '1537276322471088238'
 ]);
 
 const RAID_JOIN_THRESHOLD = parseInt(process.env.RAID_JOIN_THRESHOLD, 10) || 5;
@@ -924,9 +1021,27 @@ function helpEmbeds(includeModeration) {
     ['`!!announce <texto>`', 'Envía un anuncio en formato embed.'],
     ['`!!nivel [@usuario]`', 'Nivel, XP y progreso.'],
     ['`!!niveles`', 'Top 10 de niveles del servidor.'],
+    ['`!!stats [@usuario]`', 'Estadísticas completas con gráfica de actividad.'],
+    ['`!!afk [motivo]`', 'Te pones AFK (se avisa a quien te mencione).'],
+    ['`!!racha`', 'Tu racha de días seguidos hablando.'],
+    ['`!!cumple <día/mes>`', 'Registra tu cumpleaños para que el bot te felicite.'],
     ['`!!despedida <mensaje>`', 'Personaliza el mensaje de despedida ({user}, {username}, {server}).'],
     ['`!!canales`', 'Reaplica la restricción de escritura en los canales.'],
+    ['`!!reactionroles <mensajeID> <emoji>:<@Rol> ...`', 'Configura roles por reacción en un mensaje.'],
     ['`!!help`', 'Muestra esta ayuda.']
+  ];
+
+  const economy = [
+    ['`!!bal [@usuario]`', 'Tu saldo de monedas.'],
+    ['`!!daily`', 'Recompensa diaria.'],
+    ['`!!trabajar`', 'Gana monedas trabajando (cada hora).'],
+    ['`!!cazar`', 'Sal de cacería y gana monedas (cada 30 min).'],
+    ['`!!robar <@usuario>`', 'Intenta robar monedas a un usuario (cada hora).'],
+    ['`!!apostar <cantidad>`', 'Apostar monedas a cara o cruz.'],
+    ['`!!duelo <@usuario> <cantidad>`', 'Duelo: el que gane se lleva la apuesta.'],
+    ['`!!shop`', 'Ver la tienda del servidor.'],
+    ['`!!comprar <número>`', 'Comprar un item de la tienda.'],
+    ['`!!comprarrol <nombre> [color]`', `Crear/renombrar tu rol personalizado (${CUSTOM_ROLE_PRICE} monedas).`]
   ];
 
   const fun = [
@@ -960,6 +1075,7 @@ function helpEmbeds(includeModeration) {
 
   embeds.push(build('⚙️ Utilidades', 0x3498db, visibleUtilities));
   embeds.push(build('🎉 Diversión', 0xf1c40f, fun));
+  embeds.push(build('💰 Economía y juegos', 0x2ecc71, economy));
 
   return embeds;
 }
@@ -1037,6 +1153,8 @@ async function grantXp(message) {
     data.level = info.level;
     console.log(`📈 ${message.author.tag} subió al nivel ${info.level} en ${message.guild.name}`);
 
+    await applyLevelRole(message.guild, message.member, info.level);
+
     const channel = await client.channels
       .fetch(LEVEL_CHANNEL_ID)
       .catch(error => {
@@ -1101,6 +1219,756 @@ async function handleNiveles(message) {
   }
 
   await message.reply(`🏆 **Top niveles**\n${lines.join('\n')}`);
+}
+
+function dateKey(d) {
+  const date = d || new Date();
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+
+  return `${y}-${m}-${day}`;
+}
+
+function addDaysKey(base, offset) {
+  const date = new Date(base + 'T00:00:00Z');
+
+  date.setUTCDate(date.getUTCDate() + offset);
+
+  return dateKey(date);
+}
+
+function shortDayLabel(dayKey) {
+  const names = ['dom', 'lun', 'mar', 'mié', 'jue', 'vie', 'sáb'];
+
+  return names[new Date(dayKey + 'T00:00:00Z').getUTCDay()];
+}
+
+function ecoKey(guildId, userId) {
+  return `${guildId}:${userId}`;
+}
+
+function getEco(guildId, userId) {
+  return economyBucket.map.get(ecoKey(guildId, userId)) || { coins: 0 };
+}
+
+function addCoins(guildId, userId, amount) {
+  const data = getEco(guildId, userId);
+
+  data.coins = Math.max(0, (data.coins || 0) + amount);
+  economyBucket.map.set(ecoKey(guildId, userId), data);
+  economyBucket.debounce();
+
+  return data.coins;
+}
+
+function hoursSince(ts) {
+  return (Date.now() - (ts || 0)) / 3600000;
+}
+
+function getStat(guildId, userId) {
+  return statsBucket.map.get(`${guildId}:${userId}`) || { messages: 0 };
+}
+
+function trackActivity(message) {
+  const key = `${message.guild.id}:${message.author.id}`;
+  const data = getStat(message.guild.id, message.author.id);
+  const today = dateKey();
+  const yesterday = addDaysKey(today, -1);
+
+  data.messages = (data.messages || 0) + 1;
+
+  if (data.lastActive !== today) {
+    if (data.lastActive === yesterday) {
+      data.streak = (data.streak || 0) + 1;
+    } else {
+      data.streak = 1;
+    }
+
+    data.bestStreak = Math.max(data.bestStreak || 0, data.streak);
+
+    if (data.streak > 0 && data.streak % 7 === 0) {
+      const bonus = data.streak * 10;
+
+      addCoins(message.guild.id, message.author.id, bonus);
+      message.channel
+        .send(`🔥 **${message.author}** ¡${data.streak} días seguidos! +**${bonus}** monedas.`)
+        .catch(() => {});
+    }
+  }
+
+  data.lastActive = today;
+  data['day:' + today] = (data['day:' + today] || 0) + 1;
+
+  const oldestKey = addDaysKey(today, -14);
+
+  for (const key of Object.keys(data)) {
+    if (key.startsWith('day:') && key.slice(4) < oldestKey) {
+      delete data[key];
+    }
+  }
+
+  statsBucket.map.set(key, data);
+  statsBucket.debounce();
+}
+
+function addVcTime(guildId, userId, seconds) {
+  const data = getStat(guildId, userId);
+
+  data.vcSeconds = (data.vcSeconds || 0) + seconds;
+
+  statsBucket.map.set(`${guildId}:${userId}`, data);
+
+  const ecoKeyValue = ecoKey(guildId, userId);
+  const eco = getEco(guildId, userId);
+
+  economyBucket.map.set(ecoKeyValue, eco);
+
+  const batches = Math.floor((data.vcSeconds || 0) / 600);
+
+  if (batches > (eco.vcBatches || 0)) {
+    const bonus = (batches - (eco.vcBatches || 0)) * 10;
+
+    eco.vcBatches = batches;
+    addCoins(guildId, userId, bonus);
+  }
+
+  statsBucket.debounce();
+}
+
+function sanitizeReason(text) {
+  return String(text || '').replace(/\s+/g, ' ').trim().slice(0, 200);
+}
+
+function parseBirthday(input) {
+  const match = /^(\d{1,2})[\/\-.](\d{1,2})$/.exec((input || '').trim());
+
+  if (!match) return null;
+
+  const day = parseInt(match[1], 10);
+  const month = parseInt(match[2], 10);
+
+  if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+
+  return { month, day };
+}
+
+function parseEmoji(str) {
+  const match = /^(?:<a?)?:([^:]+):(\d{17,20})>?$/.exec(str);
+
+  if (match) {
+    return { isCustom: true, id: match[2], name: match[1] };
+  }
+
+  return { isCustom: false, name: str };
+}
+
+async function applyLevelRole(guild, member, level) {
+  const roleId = LEVEL_ROLES.get(level);
+
+  if (!roleId || !member) return;
+
+  const role = guild.roles.cache.get(roleId);
+
+  if (!role) return;
+
+  await member.roles.add(role).catch(error => console.error('No pude asignar rol de nivel:', error.message));
+}
+
+async function handleBal(message, rest) {
+  const targetId = parseUserId(rest);
+  const user = targetId
+    ? await message.client.users.fetch(targetId).catch(() => null)
+    : message.author;
+
+  if (!user) return message.reply('❌ No encontré a ese usuario.');
+
+  const coins = getEco(message.guild.id, user.id).coins || 0;
+
+  await message.reply(`💰 **${user.tag}** tiene **${coins}** monedas.`);
+}
+
+async function handleDaily(message) {
+  const data = getEco(message.guild.id, message.author.id);
+
+  if (data.lastDaily && hoursSince(data.lastDaily) < 24) {
+    const wait = 24 - hoursSince(data.lastDaily);
+    const h = Math.floor(wait);
+    const m = Math.round((wait - h) * 60);
+
+    return message.reply(`⏳ Ya cobraste hoy. Vuelve en **${h}h ${m}m**.`);
+  }
+
+  data.lastDaily = Date.now();
+  economyBucket.map.set(ecoKey(message.guild.id, message.author.id), data);
+  economyBucket.debounce();
+
+  const amount = 100 + Math.floor(Math.random() * 151);
+
+  addCoins(message.guild.id, message.author.id, amount);
+
+  await message.reply(`🎁 ¡Recompensa diaria! +**${amount}** monedas. Ahora tienes **${getEco(message.guild.id, message.author.id).coins}**.`);
+}
+
+async function handleTrabajar(message) {
+  const data = getEco(message.guild.id, message.author.id);
+
+  if (data.lastWork && hoursSince(data.lastWork) < 1) {
+    const wait = Math.ceil(60 - hoursSince(data.lastWork) * 60);
+
+    return message.reply(`⏳ Descansa un poco... vuelve a trabajar en **${wait} min**.`);
+  }
+
+  data.lastWork = Date.now();
+  economyBucket.map.set(ecoKey(message.guild.id, message.author.id), data);
+  economyBucket.debounce();
+
+  const amount = 20 + Math.floor(Math.random() * 41);
+
+  addCoins(message.guild.id, message.author.id, amount);
+
+  await message.reply(`💼 Trabajaste y ganaste **${amount}** monedas. Ahora tienes **${getEco(message.guild.id, message.author.id).coins}**.`);
+}
+
+async function handleShop(message) {
+  if (SHOP_ITEMS.length === 0) {
+    return message.reply('🛒 La tienda está vacía. El admin puede configurar items con la variable `SHOP_ITEMS` (Nombre:rolID:precio|...).');
+  }
+
+  const lines = SHOP_ITEMS.map((item, i) =>
+    `${i + 1}. **${item.name}** — ${item.price} monedas (rol <@&${item.roleId}>)`
+  );
+
+  await message.reply(`🛒 **Tienda del servidor**\nUsa \`!!comprar <número>\`\n${lines.join('\n')}`);
+}
+
+async function handleComprar(message, rest) {
+  const index = parseInt(rest, 10);
+
+  if (!index || index < 1 || index > SHOP_ITEMS.length) {
+    return message.reply('❌ Uso: `!!comprar <número>` (mira `!!shop`).');
+  }
+
+  const item = SHOP_ITEMS[index - 1];
+  const coins = getEco(message.guild.id, message.author.id).coins || 0;
+
+  if (coins < item.price) {
+    return message.reply(`❌ Te faltan **${item.price - coins}** monedas para **${item.name}**.`);
+  }
+
+  const role = message.guild.roles.cache.get(item.roleId);
+
+  if (!role) {
+    return message.reply('❌ El rol de la tienda no existe en este servidor.');
+  }
+
+  if (message.member.roles.cache.has(item.roleId)) {
+    return message.reply('❌ Ya tienes ese rol.');
+  }
+
+  const added = await message.member.roles.add(role)
+    .then(() => true)
+    .catch(() => false);
+
+  if (!added) {
+    return message.reply('❌ No pude asignar el rol (¿me faltan permisos?). No se te cobró nada.');
+  }
+
+  addCoins(message.guild.id, message.author.id, -item.price);
+
+  await message.reply(`🛒 ¡Compraste **${item.name}** por **${item.price}** monedas! Te quedan **${getEco(message.guild.id, message.author.id).coins}**.`);
+}
+
+function sanitizeRoleName(text) {
+  return String(text || '').replace(/\s+/g, ' ').trim().slice(0, 32);
+}
+
+function parseRoleColor(input) {
+  if (!input) return null;
+
+  const t = String(input).trim().replace(/^#/, '');
+
+  if (/^[0-9a-f]{6}$/i.test(t)) {
+    return parseInt(t, 16);
+  }
+
+  const name = t.toLowerCase();
+
+  if (Object.prototype.hasOwnProperty.call(ROLE_COLOR_NAMES, name)) {
+    return ROLE_COLOR_NAMES[name];
+  }
+
+  return null;
+}
+
+function randomRoleColor() {
+  const colors = Object.values(ROLE_COLOR_NAMES);
+  return colors[Math.floor(Math.random() * colors.length)];
+}
+
+async function positionCustomRole(guild, role) {
+  let anchor = null;
+
+  for (const id of MEMBER_DENIED_ROLES) {
+    const candidate = guild.roles.cache.get(id);
+
+    if (candidate && (!anchor || candidate.position > anchor.position)) {
+      anchor = candidate;
+    }
+  }
+
+  const me = guild.members.me;
+  const botHighest = me && me.roles.highest ? me.roles.highest.position : null;
+
+  let target = anchor ? anchor.position + 1 : 1;
+
+  if (typeof botHighest === 'number') {
+    target = Math.min(target, botHighest - 1);
+  }
+
+  if (target > 0) {
+    await role.setPosition(target).catch(() => {});
+  }
+}
+
+async function handleComprarRol(message, rest) {
+  if (!rest.trim()) {
+    return message.reply(
+      `❌ Uso: \`!!comprarrol <nombre> [color]\`\n` +
+      `Ejemplos: \`!!comprarrol Mi Rolete azul\` o \`!!comprarrol Legendario #ff0000\`\n` +
+      `Colores: rojo, azul, verde, morado, rosa, naranja, amarillo, blanco, negro, cyan, gris, turquesa o un hex (#rrggbb).\n` +
+      `Costo: **${CUSTOM_ROLE_PRICE}** monedas. Si ya tienes uno, lo actualiza sin volver a cobrar.`
+    );
+  }
+
+  const words = rest.trim().split(/\s+/);
+  const lastWord = words[words.length - 1];
+  const color = parseRoleColor(lastWord);
+  const rawName = color !== null ? words.slice(0, -1).join(' ') : rest.trim();
+
+  if (!rawName) {
+    return message.reply('❌ Escribe un nombre válido para tu rol.');
+  }
+
+  const name = sanitizeRoleName(rawName);
+  const coins = getEco(message.guild.id, message.author.id).coins || 0;
+
+  if (coins < CUSTOM_ROLE_PRICE) {
+    return message.reply(`❌ Te faltan **${CUSTOM_ROLE_PRICE - coins}** monedas para tu rol personalizado.`);
+  }
+
+  const key = `${message.guild.id}:${message.author.id}`;
+  const existingRoleId = customRolesBucket.map.get(key);
+  const existingRole = existingRoleId ? message.guild.roles.cache.get(existingRoleId) : null;
+
+  let role;
+
+  try {
+    if (existingRole) {
+      await existingRole.setName(name);
+
+      if (color !== null) {
+        await existingRole.setColor(color);
+      }
+
+      role = existingRole;
+    } else {
+      role = await message.guild.roles.create({
+        name,
+        color: color !== null ? color : randomRoleColor(),
+        permissions: [],
+        reason: `Rol personalizado de ${message.author.tag}`
+      });
+
+      await positionCustomRole(message.guild, role);
+    }
+  } catch (error) {
+    console.error('Error creando rol personalizado:', error);
+    return message.reply('❌ No pude crear/actualizar el rol. No se te cobró nada.');
+  }
+
+  if (!existingRole) {
+    await message.member.roles.add(role).catch(() => {});
+  }
+
+  customRolesBucket.map.set(key, role.id);
+  customRolesBucket.debounce();
+
+  addCoins(message.guild.id, message.author.id, -CUSTOM_ROLE_PRICE);
+
+  const colorHex = '#' + (role.color || 0).toString(16).padStart(6, '0');
+
+  await message.reply(
+    `✅ Tu rol personalizado **${role.name}** (${colorHex}) está listo. ` +
+    `Cambia nombre o color cuando quieras con \`!!comprarrol\`. Te quedan **${getEco(message.guild.id, message.author.id).coins}** monedas.`
+  );
+}
+
+async function handleApostar(message, rest) {
+  const amount = parseInt(rest, 10);
+
+  if (!amount || amount <= 0) {
+    return message.reply('❌ Uso: `!!apostar <cantidad>`');
+  }
+
+  const coins = getEco(message.guild.id, message.author.id).coins || 0;
+
+  if (coins < amount) {
+    return message.reply(`❌ No tienes suficientes monedas (tienes **${coins}**).`);
+  }
+
+  const win = Math.random() < 0.5;
+
+  addCoins(message.guild.id, message.author.id, win ? amount : -amount);
+
+  await message.reply(
+    (win ? '🎰 ¡Ganaste! +' : '🎰 Perdiste −') +
+    `**${amount}** monedas. Ahora tienes **${getEco(message.guild.id, message.author.id).coins}**.`
+  );
+}
+
+async function handleCazar(message) {
+  const data = getEco(message.guild.id, message.author.id);
+
+  if (data.lastHunt && hoursSince(data.lastHunt) < 0.5) {
+    const wait = Math.ceil(30 - hoursSince(data.lastHunt) * 60);
+
+    return message.reply(`⏳ Espera **${wait} min** para cazar de nuevo.`);
+  }
+
+  data.lastHunt = Date.now();
+  economyBucket.map.set(ecoKey(message.guild.id, message.author.id), data);
+  economyBucket.debounce();
+
+  const roll = Math.random();
+
+  if (roll < 0.6) {
+    const amount = 20 + Math.floor(Math.random() * 61);
+
+    addCoins(message.guild.id, message.author.id, amount);
+
+    return message.reply(`🎣 ¡Cazaste algo! +**${amount}** monedas.`);
+  }
+
+  if (roll < 0.85) {
+    return message.reply('🌲 Se te escapó la presa... no ganaste nada.');
+  }
+
+  const jackpot = 150 + Math.floor(Math.random() * 151);
+
+  addCoins(message.guild.id, message.author.id, jackpot);
+
+  return message.reply(`🦌 ¡Cazaste al gran jefe del anexo! +**${jackpot}** monedas. ¡Jackpot!`);
+}
+
+async function handleRobar(message, rest) {
+  const targetId = parseUserId(rest);
+
+  if (!targetId) {
+    return message.reply('❌ Uso: `!!robar <@usuario>`');
+  }
+
+  if (targetId === message.author.id) {
+    return message.reply('❌ No puedes robarte a ti mismo.');
+  }
+
+  const member = await getGuildMember(message.guild, targetId);
+
+  if (!member) {
+    return message.reply('❌ No encontré a ese usuario.');
+  }
+
+  const data = getEco(message.guild.id, message.author.id);
+
+  if (data.lastRob && hoursSince(data.lastRob) < 1) {
+    const wait = Math.ceil(60 - hoursSince(data.lastRob) * 60);
+
+    return message.reply(`⏳ Espera **${wait} min** para robar de nuevo.`);
+  }
+
+  data.lastRob = Date.now();
+  economyBucket.map.set(ecoKey(message.guild.id, message.author.id), data);
+  economyBucket.debounce();
+
+  const targetCoins = getEco(message.guild.id, targetId).coins || 0;
+
+  if (targetCoins < 50) {
+    return message.reply('🕵️ Ese usuario no tiene nada que robar (menos de 50 monedas).');
+  }
+
+  if (Math.random() < 0.5) {
+    const steal = Math.max(10, Math.floor(targetCoins * (0.1 + Math.random() * 0.15)));
+
+    addCoins(message.guild.id, targetId, -steal);
+    addCoins(message.guild.id, message.author.id, steal);
+
+    return message.reply(`🔪 ¡Robaste **${steal}** monedas de **${member.user.tag}**!`);
+  }
+
+  const fine = 30 + Math.floor(Math.random() * 41);
+
+  addCoins(message.guild.id, message.author.id, -fine);
+
+  return message.reply(`🚨 ¡Te atraparon robando! Pagaste una multa de **${fine}** monedas.`);
+}
+
+async function handleDuelo(message, rest) {
+  const parts = rest.split(/\s+/);
+  const targetId = parseUserId(parts[0]);
+  const amount = parseInt(parts[1], 10);
+
+  if (!targetId || !amount || amount <= 0) {
+    return message.reply('❌ Uso: `!!duelo <@usuario> <cantidad>`');
+  }
+
+  if (targetId === message.author.id) {
+    return message.reply('❌ No puedes duelarte a ti mismo.');
+  }
+
+  const member = await getGuildMember(message.guild, targetId);
+
+  if (!member) {
+    return message.reply('❌ No encontré a ese usuario.');
+  }
+
+  const myCoins = getEco(message.guild.id, message.author.id).coins || 0;
+  const targetCoins = getEco(message.guild.id, targetId).coins || 0;
+
+  if (myCoins < amount) {
+    return message.reply(`❌ No tienes suficientes monedas (tienes **${myCoins}**).`);
+  }
+
+  if (targetCoins < amount) {
+    return message.reply(`❌ **${member.user.tag}** no tiene suficientes monedas (tiene **${targetCoins}**).`);
+  }
+
+  const iWin = Math.random() < 0.5;
+
+  if (iWin) {
+    addCoins(message.guild.id, message.author.id, amount);
+    addCoins(message.guild.id, targetId, -amount);
+
+    return message.reply(`🤺 ¡Ganaste el duelo contra **${member.user.tag}**! +**${amount}** monedas.`);
+  }
+
+  addCoins(message.guild.id, message.author.id, -amount);
+  addCoins(message.guild.id, targetId, amount);
+
+  return message.reply(`🤺 Perdiste el duelo contra **${member.user.tag}**... −**${amount}** monedas.`);
+}
+
+async function handleRacha(message) {
+  const data = getStat(message.guild.id, message.author.id);
+
+  await message.reply(
+    `🔥 **Tu racha**: **${data.streak || 0}** días seguidos.\n` +
+    `🏆 **Récord**: ${data.bestStreak || 0} días\n` +
+    `💬 **Mensajes**: ${data.messages || 0}`
+  );
+}
+
+async function handleCumple(message, rest) {
+  const birthday = parseBirthday(rest);
+
+  if (!birthday) {
+    return message.reply('❌ Uso: `!!cumple <día/mes>` (ej: `!!cumple 24/12`)');
+  }
+
+  const monthName = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'][birthday.month - 1];
+
+  birthdaysBucket.map.set(`${message.guild.id}:${message.author.id}`, birthday);
+  birthdaysBucket.debounce();
+
+  await message.reply(`🎂 ¡Registrado! Tu cumpleaños es el **${birthday.day} de ${monthName}**.`);
+}
+
+async function handleStats(message, rest) {
+  const targetId = parseUserId(rest);
+  const user = targetId
+    ? await message.client.users.fetch(targetId).catch(() => null)
+    : message.author;
+
+  if (!user) return message.reply('❌ No encontré a ese usuario.');
+
+  const key = `${message.guild.id}:${user.id}`;
+  const levelData = LEVELS.get(key) || { xp: 0, level: 1 };
+  const info = levelInfo(levelData.xp);
+  const stat = getStat(message.guild.id, user.id);
+  const eco = getEco(message.guild.id, user.id);
+  const afkData = afkBucket.map.get(key);
+
+  const last7 = [];
+
+  for (let i = 6; i >= 0; i--) {
+    const day = addDaysKey(dateKey(), -i);
+
+    last7.push({ label: shortDayLabel(day), count: stat['day:' + day] || 0 });
+  }
+
+  const image = await funImages.createStatsImage(
+    user.username,
+    info.level,
+    info.xpIntoLevel,
+    info.xpToNext,
+    stat.messages || 0,
+    eco.coins || 0,
+    stat.streak || 0,
+    Math.floor((stat.vcSeconds || 0) / 60),
+    last7
+  );
+
+  const embed = new EmbedBuilder()
+    .setTitle(`📊 Estadísticas de ${user.tag}`)
+    .setColor(0x3498db)
+    .addFields(
+      { name: 'Nivel', value: `${info.level} (${levelData.xp} XP)`, inline: true },
+      { name: 'Mensajes', value: `${stat.messages || 0}`, inline: true },
+      { name: 'Monedas', value: `${eco.coins || 0} 💰`, inline: true },
+      { name: 'Racha', value: `${stat.streak || 0} días (récord ${stat.bestStreak || 0})`, inline: true },
+      { name: 'Tiempo en voz', value: `${Math.floor((stat.vcSeconds || 0) / 60)} min`, inline: true },
+      { name: 'Estado', value: afkData ? `AFK (${afkData.reason})` : 'Activo', inline: true }
+    )
+    .setImage('attachment://stats.png')
+    .setFooter({ text: 'Mensajes de los últimos 7 días' });
+
+  await message.reply({
+    embeds: [embed],
+    files: [{ attachment: image, name: 'stats.png' }]
+  });
+}
+
+async function handleAfk(message, rest) {
+  const reason = sanitizeReason(rest) || 'sin motivo';
+  const key = `${message.guild.id}:${message.author.id}`;
+
+  afkBucket.map.set(key, { reason, since: Date.now() });
+  afkBucket.debounce();
+
+  await message.reply(`😴 Estás AFK ahora. **Motivo:** ${reason}`);
+}
+
+async function handleReactionRoles(message, rest) {
+  const parts = rest.split(/\s+/);
+
+  if (parts.length < 2 || !/^\d{17,20}$/.test(parts[0])) {
+    return message.reply('❌ Uso: `!!reactionroles <mensajeID> <emoji>:<@Rol> [emoji2:<@Rol2>...]`');
+  }
+
+  const messageId = parts[0];
+  const config = [];
+
+  for (const pair of parts.slice(1)) {
+    const colon = pair.lastIndexOf(':');
+    const emojiPart = colon === -1 ? '' : pair.slice(0, colon);
+    const rolePart = pair.slice(colon + 1);
+    const roleId = parseUserId(rolePart);
+
+    if (!emojiPart || !roleId) {
+      return message.reply(`❌ Par inválido: \`${pair}\`. Formato: \`emoji:<@Rol>\``);
+    }
+
+    if (!message.guild.roles.cache.get(roleId)) {
+      return message.reply(`❌ No encontré el rol \`${rolePart}\` en este servidor.`);
+    }
+
+    config.push({ emoji: emojiPart, roleId });
+  }
+
+  const target = await message.channel.messages.fetch(messageId).catch(() => null);
+
+  if (!target) {
+    return message.reply(`❌ No encontré el mensaje \`${messageId}\` en este canal.`);
+  }
+
+  reactionRolesBucket.map.set(`${message.guild.id}:${message.channel.id}:${messageId}`, config);
+  reactionRolesBucket.debounce();
+
+  for (const pair of config) {
+    const emoji = parseEmoji(pair.emoji);
+    const resolved = emoji.isCustom
+      ? message.guild.emojis.cache.get(emoji.id)
+      : emoji.name;
+
+    if (resolved) {
+      await target.react(resolved).catch(() => {});
+    }
+  }
+
+  await message.reply(`✅ Roles por reacción configurados en el mensaje <https://discord.com/channels/${message.guild.id}/${message.channel.id}/${messageId}>.`);
+}
+
+async function handleReactionChange(reaction, member, adding) {
+  if (!reaction.message.guild) return;
+
+  if (member.partial) {
+    await member.fetch().catch(() => null);
+  }
+
+  if (!member) return;
+
+  if (reaction.partial) {
+    await reaction.fetch().catch(() => null);
+  }
+
+  if (reaction.message.partial) {
+    await reaction.message.fetch().catch(() => null);
+  }
+
+  const key = `${reaction.message.guild.id}:${reaction.message.channelId}:${reaction.message.id}`;
+  const config = reactionRolesBucket.map.get(key);
+
+  if (!config) return;
+
+  const emoji = reaction.emoji;
+
+  for (const pair of config) {
+    const matches = emoji.id ? pair.emoji.includes(emoji.id) : pair.emoji === emoji.name;
+
+    if (!matches) continue;
+
+    if (adding) {
+      if (member.roles.cache.has(pair.roleId)) continue;
+
+      await member.roles.add(pair.roleId).catch(() => {});
+    } else {
+      await member.roles.remove(pair.roleId).catch(() => {});
+    }
+  }
+}
+
+async function checkBirthdays() {
+  if (!BIRTHDAY_CHANNEL_ID) return;
+
+  const now = new Date();
+  const today = `${now.getMonth() + 1}/${now.getDate()}`;
+
+  for (const [key, value] of birthdaysBucket.map) {
+    if (!value.month || !value.day) continue;
+
+    if (`${value.month}/${value.day}` !== today) continue;
+
+    const [guildId, userId] = key.split(':');
+    const guild = client.guilds.cache.get(guildId);
+
+    if (!guild) continue;
+
+    const member = await getGuildMember(guild, userId);
+
+    if (!member) continue;
+
+    const announceKey = `announced:${key}:${today}`;
+
+    if (birthdaysBucket.map.get(announceKey)) continue;
+
+    const channel = await client.channels.fetch(BIRTHDAY_CHANNEL_ID).catch(() => null);
+
+    if (!channel) continue;
+
+    birthdaysBucket.map.set(announceKey, true);
+    birthdaysBucket.debounce();
+
+    await channel.send(`🎂 ¡Feliz cumpleaños **${member.user.tag}**! Que cumplas muchos más en el anexo 🥳`).catch(() => {});
+  }
 }
 
 async function handleMsgBan(message, rest) {
@@ -2178,6 +3046,9 @@ client.once('clientReady', async () => {
   }
 
   console.log('🔒 Restricciones de canales aplicadas.');
+
+  await checkBirthdays();
+  setInterval(checkBirthdays, 3600000);
 });
 
 client.on('guildMemberAdd', async member => {
@@ -2207,6 +3078,36 @@ client.on('messageCreate', async message => {
   try {
     if (message.author.bot) return;
 
+    const guildId = message.guild?.id;
+
+    if (guildId) {
+      const afkKey = `${guildId}:${message.author.id}`;
+
+      if (afkBucket.map.has(afkKey)) {
+        afkBucket.map.delete(afkKey);
+        afkBucket.debounce();
+        await message.reply('👋 ¡Bienvenido de vuelta! Ya no estás AFK.').catch(() => {});
+      }
+
+      trackActivity(message);
+
+      const rawContent = message.content.trim();
+
+      if (!rawContent.startsWith('!!') && message.mentions.users.size > 0) {
+        for (const [userId, user] of message.mentions.users) {
+          if (userId === message.author.id) continue;
+
+          const afkData = afkBucket.map.get(`${guildId}:${userId}`);
+
+          if (afkData) {
+            await message.channel
+              .send(`😴 **${user.tag}** está AFK: **${afkData.reason}**`)
+              .catch(() => {});
+          }
+        }
+      }
+    }
+
     if (await enforceAdminOnlyChannels(message)) return;
 
     await grantXp(message);
@@ -2227,7 +3128,7 @@ client.on('messageCreate', async message => {
 
     if (!content.startsWith('!!')) return;
 
-    const commandMatch = /^!!(emoji|sticker|ban|kick|timeout|unban|warn|warns|delwarn|slowmode|lock|unlock|announce|avatar|userinfo|serverinfo|ping|poll|say|8ball|dado|moneda|slap|quote|firma|polaroid|wanted|logro|mute|unmute|vc|antiraid|despedida|nivel|niveles|help|canales)\b/i.exec(content);
+    const commandMatch = /^!!(emoji|sticker|ban|kick|timeout|unban|warn|warns|delwarn|slowmode|lock|unlock|announce|avatar|userinfo|serverinfo|ping|poll|say|8ball|dado|moneda|slap|quote|firma|polaroid|wanted|logro|mute|unmute|vc|antiraid|despedida|nivel|niveles|help|canales|afk|bal|daily|trabajar|shop|comprar|apostar|robar|cazar|duelo|racha|cumple|stats|reactionroles)\b/i.exec(content);
 
     if (!commandMatch) return;
 
@@ -2417,6 +3318,81 @@ client.on('messageCreate', async message => {
       return;
     }
 
+    if (commandName === 'afk') {
+      await handleAfk(message, rest);
+      return;
+    }
+
+    if (commandName === 'bal') {
+      await handleBal(message, rest);
+      return;
+    }
+
+    if (commandName === 'daily') {
+      await handleDaily(message);
+      return;
+    }
+
+    if (commandName === 'trabajar') {
+      await handleTrabajar(message);
+      return;
+    }
+
+    if (commandName === 'shop') {
+      await handleShop(message);
+      return;
+    }
+
+    if (commandName === 'comprar') {
+      await handleComprar(message, rest);
+      return;
+    }
+
+    if (commandName === 'comprarrol') {
+      await handleComprarRol(message, rest);
+      return;
+    }
+
+    if (commandName === 'apostar') {
+      await handleApostar(message, rest);
+      return;
+    }
+
+    if (commandName === 'robar') {
+      await handleRobar(message, rest);
+      return;
+    }
+
+    if (commandName === 'cazar') {
+      await handleCazar(message);
+      return;
+    }
+
+    if (commandName === 'duelo') {
+      await handleDuelo(message, rest);
+      return;
+    }
+
+    if (commandName === 'racha') {
+      await handleRacha(message);
+      return;
+    }
+
+    if (commandName === 'cumple') {
+      await handleCumple(message, rest);
+      return;
+    }
+
+    if (commandName === 'stats') {
+      await handleStats(message, rest);
+      return;
+    }
+
+    if (commandName === 'reactionroles') {
+      await handleReactionRoles(message, rest);
+      return;
+    }
+
     if (commandName !== 'emoji' && commandName !== 'sticker') return;
 
     let messageId = null;
@@ -2479,7 +3455,7 @@ client.on('messageCreate', async message => {
   } catch (error) {
     console.error(error);
 
-    message.reply('❌ Ocurrió un error inesperado al procesar la imagen.')
+    message.reply('❌ Ocurrió un error inesperado.')
       .catch(() => {});
   }
 });
@@ -2663,6 +3639,61 @@ client.on('guildMemberRemove', async member => {
   }
 });
 
+client.on('voiceStateUpdate', (oldState, newState) => {
+  const id = newState.id;
+
+  if (oldState.channelId && oldState.channelId !== newState.channelId) {
+    const session = voiceSessions.get(id);
+
+    if (session) {
+      addVcTime(session.guildId, id, Math.max(0, (Date.now() - session.since) / 1000));
+      voiceSessions.delete(id);
+    }
+  }
+
+  if (newState.channelId && oldState.channelId !== newState.channelId) {
+    voiceSessions.set(id, { since: Date.now(), guildId: newState.guild.id });
+  }
+});
+
+client.on('messageReactionAdd', async (reaction, user) => {
+  if (user.bot) return;
+
+  try {
+    if (reaction.partial) await reaction.fetch();
+    if (reaction.message.partial) await reaction.message.fetch();
+  } catch {
+    return;
+  }
+
+  const member = reaction.message.guild
+    ? await getGuildMember(reaction.message.guild, user.id)
+    : null;
+
+  if (member) {
+    await handleReactionChange(reaction, member, true);
+  }
+});
+
+client.on('messageReactionRemove', async (reaction, user) => {
+  if (user.bot) return;
+
+  try {
+    if (reaction.partial) await reaction.fetch();
+    if (reaction.message.partial) await reaction.message.fetch();
+  } catch {
+    return;
+  }
+
+  const member = reaction.message.guild
+    ? await getGuildMember(reaction.message.guild, user.id)
+    : null;
+
+  if (member) {
+    await handleReactionChange(reaction, member, false);
+  }
+});
+
 http.createServer((req, res) => {
   res.writeHead(200, { 'Content-Type': 'text/plain' });
   res.end('Bot activo');
@@ -2687,6 +3718,15 @@ async function registerCommands() {
   try {
     await loadLevels();
 
+    await Promise.all([
+      economyBucket.init(),
+      statsBucket.init(),
+      afkBucket.init(),
+      birthdaysBucket.init(),
+      reactionRolesBucket.init(),
+      customRolesBucket.init()
+    ]);
+
     await registerCommands();
     await client.login(process.env.TOKEN);
   } catch (error) {
@@ -2695,12 +3735,24 @@ async function registerCommands() {
   }
 })();
 
-process.on('SIGTERM', async () => {
+async function saveAllBuckets() {
   await saveLevels();
+  await Promise.all([
+    economyBucket.save(),
+    statsBucket.save(),
+    afkBucket.save(),
+    birthdaysBucket.save(),
+    reactionRolesBucket.save(),
+    customRolesBucket.save()
+  ]);
+}
+
+process.on('SIGTERM', async () => {
+  await saveAllBuckets();
   process.exit(0);
 });
 
 process.on('SIGINT', async () => {
-  await saveLevels();
+  await saveAllBuckets();
   process.exit(0);
 });
