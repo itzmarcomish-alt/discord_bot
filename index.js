@@ -202,7 +202,8 @@ const PUBLIC_COMMANDS = new Set([
   'avatar', 'userinfo', 'serverinfo', 'ping',
   'poll', 'say', 'nivel', 'niveles',
   'afk', 'bal', 'daily', 'trabajar', 'shop', 'comprar', 'comprarrol', 'apostar',
-  'robar', 'cazar', 'duelo', 'racha', 'cumple', 'stats'
+  'robar', 'cazar', 'duelo', 'racha', 'cumple', 'stats',
+  'banco', 'depositar', 'retirar', 'transferir'
 ]);
 
 const ADMIN_UTILITY_KEYWORDS = new Set(['emoji', 'sticker', 'announce', 'despedida', 'canales', 'reactionroles']);
@@ -1052,7 +1053,11 @@ function helpEmbeds(includeModeration) {
   ];
 
   const economy = [
-    ['`!!bal [@usuario]`', 'Tu saldo de monedas.'],
+    ['`!!bal [@usuario]`', 'Tu saldo de monedas (billetera + banco).'],
+    ['`!!banco [@usuario]`', 'Tu dinero guardado en el banco (a salvo de robos).'],
+    ['`!!depositar <cantidad | todo>`', 'Guarda monedas en el banco.'],
+    ['`!!retirar <cantidad | todo>`', 'Saca monedas del banco.'],
+    ['`!!transferir <@usuario> <cantidad>`', 'Envía monedas a otro usuario.'],
     ['`!!daily`', 'Recompensa diaria.'],
     ['`!!trabajar`', 'Gana monedas trabajando (cada hora).'],
     ['`!!cazar`', 'Sal de cacería y gana monedas (cada 30 min).'],
@@ -1403,9 +1408,124 @@ async function handleBal(message, rest) {
 
   if (!user) return message.reply('❌ No encontré a ese usuario.');
 
-  const coins = getEco(message.guild.id, user.id).coins || 0;
+  const data = getEco(message.guild.id, user.id);
 
-  await message.reply(`💰 **${user.tag}** tiene **${coins}** monedas.`);
+  await message.reply(
+    `💰 **${user.tag}**\n` +
+    `Billetera: **${data.coins || 0}** monedas\n` +
+    `🏦 Banco: **${data.bank || 0}** monedas (a salvo de robos)`
+  );
+}
+
+async function handleBanco(message, rest) {
+  const targetId = parseUserId(rest);
+  const user = targetId
+    ? await message.client.users.fetch(targetId).catch(() => null)
+    : message.author;
+
+  if (!user) return message.reply('❌ No encontré a ese usuario.');
+
+  const data = getEco(message.guild.id, user.id);
+
+  await message.reply(
+    `🏦 Banco de **${user.tag}**\n` +
+    `Guardado: **${data.bank || 0}** monedas\n` +
+    `Billetera: **${data.coins || 0}** monedas (aquí sí te las pueden robar)`
+  );
+}
+
+function parseBankAmount(input, total) {
+  const text = String(input || '').trim().toLowerCase();
+
+  if (text === 'todo') return total;
+
+  const amount = parseInt(text, 10);
+
+  if (!amount || amount <= 0) return null;
+
+  return amount;
+}
+
+async function handleDepositar(message, rest) {
+  const data = getEco(message.guild.id, message.author.id);
+  const wallet = data.coins || 0;
+  const amount = parseBankAmount(rest, wallet);
+
+  if (amount === null) {
+    return message.reply('❌ Uso: `!!depositar <cantidad>` o `!!depositar todo`');
+  }
+
+  if (amount > wallet) {
+    return message.reply(`❌ Solo tienes **${wallet}** monedas en tu billetera.`);
+  }
+
+  data.coins = wallet - amount;
+  data.bank = (data.bank || 0) + amount;
+  economyBucket.map.set(ecoKey(message.guild.id, message.author.id), data);
+  economyBucket.debounce();
+
+  await message.reply(
+    `🏦 Depositaste **${amount}** monedas al banco.\n` +
+    `Billetera: **${data.coins}** · Banco: **${data.bank}**`
+  );
+}
+
+async function handleRetirar(message, rest) {
+  const data = getEco(message.guild.id, message.author.id);
+  const bank = data.bank || 0;
+  const amount = parseBankAmount(rest, bank);
+
+  if (amount === null) {
+    return message.reply('❌ Uso: `!!retirar <cantidad>` o `!!retirar todo`');
+  }
+
+  if (amount > bank) {
+    return message.reply(`❌ Solo tienes **${bank}** monedas en el banco.`);
+  }
+
+  data.bank = bank - amount;
+  data.coins = (data.coins || 0) + amount;
+  economyBucket.map.set(ecoKey(message.guild.id, message.author.id), data);
+  economyBucket.debounce();
+
+  await message.reply(
+    `🏦 Retiraste **${amount}** monedas del banco.\n` +
+    `Billetera: **${data.coins}** · Banco: **${data.bank}**`
+  );
+}
+
+async function handleTransferir(message, rest) {
+  const [rawTarget, rawAmount, ...extra] = rest.split(/\s+/);
+  const targetId = parseUserId(rawTarget);
+  const amount = parseInt(rawAmount, 10);
+
+  if (!targetId || !amount || amount <= 0 || extra.length > 0) {
+    return message.reply('❌ Uso: `!!transferir <@usuario> <cantidad>`');
+  }
+
+  if (targetId === message.author.id) {
+    return message.reply('❌ No puedes transferirte monedas a ti mismo.');
+  }
+
+  const member = await getGuildMember(message.guild, targetId);
+
+  if (!member) return message.reply('❌ No encontré a ese usuario.');
+
+  const data = getEco(message.guild.id, message.author.id);
+  const wallet = data.coins || 0;
+
+  if (amount > wallet) {
+    return message.reply(`❌ Solo tienes **${wallet}** monedas en tu billetera.`);
+  }
+
+  data.coins = wallet - amount;
+  economyBucket.map.set(ecoKey(message.guild.id, message.author.id), data);
+  addCoins(message.guild.id, targetId, amount);
+
+  await message.reply(
+    `💸 Transferiste **${amount}** monedas a **${member.user.tag}**.\n` +
+    `Te quedan **${data.coins}** en tu billetera.`
+  );
 }
 
 async function handleDaily(message) {
@@ -1818,9 +1938,16 @@ async function handleRobar(message, rest) {
   economyBucket.map.set(ecoKey(message.guild.id, message.author.id), data);
   economyBucket.debounce();
 
-  const targetCoins = getEco(message.guild.id, targetId).coins || 0;
+  const targetData = getEco(message.guild.id, targetId);
+  const targetCoins = targetData.coins || 0;
 
   if (targetCoins < 50) {
+    const bank = targetData.bank || 0;
+
+    if (bank >= 50) {
+      return message.reply(`🕵️ Ese usuario tiene **${bank}** monedas guardadas en el banco... ahí no puedes robarlas.`);
+    }
+
     return message.reply('🕵️ Ese usuario no tiene nada que robar (menos de 50 monedas).');
   }
 
@@ -3264,7 +3391,7 @@ client.on('messageCreate', async message => {
 
     if (!content.startsWith('!!')) return;
 
-    const commandMatch = /^!!(emoji|sticker|ban|kick|timeout|unban|warn|warns|delwarn|slowmode|lock|unlock|announce|avatar|userinfo|serverinfo|ping|poll|say|8ball|dado|moneda|slap|quote|firma|polaroid|wanted|logro|mute|unmute|vc|antiraid|despedida|nivel|niveles|help|canales|afk|bal|daily|trabajar|shop|comprar|comprarrol|apostar|robar|cazar|duelo|racha|cumple|stats|reactionroles|setnivel|setcoins)\b/i.exec(content);
+    const commandMatch = /^!!(emoji|sticker|ban|kick|timeout|unban|warn|warns|delwarn|slowmode|lock|unlock|announce|avatar|userinfo|serverinfo|ping|poll|say|8ball|dado|moneda|slap|quote|firma|polaroid|wanted|logro|mute|unmute|vc|antiraid|despedida|nivel|niveles|help|canales|afk|bal|daily|trabajar|shop|comprar|comprarrol|apostar|robar|cazar|duelo|racha|cumple|stats|reactionroles|setnivel|setcoins|banco|depositar|retirar|transferir)\b/i.exec(content);
 
     if (!commandMatch) return;
 
@@ -3461,6 +3588,26 @@ client.on('messageCreate', async message => {
 
     if (commandName === 'bal') {
       await handleBal(message, rest);
+      return;
+    }
+
+    if (commandName === 'banco') {
+      await handleBanco(message, rest);
+      return;
+    }
+
+    if (commandName === 'depositar') {
+      await handleDepositar(message, rest);
+      return;
+    }
+
+    if (commandName === 'retirar') {
+      await handleRetirar(message, rest);
+      return;
+    }
+
+    if (commandName === 'transferir') {
+      await handleTransferir(message, rest);
       return;
     }
 
