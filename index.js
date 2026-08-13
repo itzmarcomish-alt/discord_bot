@@ -76,7 +76,22 @@ const SHOP_ITEMS = (process.env.SHOP_ITEMS || '')
   })
   .filter(Boolean);
 
-const CUSTOM_ROLE_PRICE = parseInt(process.env.CUSTOM_ROLE_PRICE, 10) || 500;
+const CUSTOM_ROLE_PRICE = parseInt(process.env.CUSTOM_ROLE_PRICE, 10) || 2000;
+
+const SHOP_THEMES = [
+  { id: 'ghost',   name: 'Fantasma',    color: 0x95a5a6, price: 300,  emoji: '👻' },
+  { id: 'flower',  name: 'Florecita',   color: 0xfdcb6e, price: 350,  emoji: '🌸' },
+  { id: 'mint',    name: 'Menta',       color: 0x1abc9c, price: 400,  emoji: '🍃' },
+  { id: 'siren',   name: 'Sirena',      color: 0xff6b81, price: 450,  emoji: '🧜' },
+  { id: 'unicorn', name: 'Unicornio',   color: 0xe91e63, price: 500,  emoji: '🦄' },
+  { id: 'rainbow', name: 'Arcoíris',    color: 0xff9eaa, price: 600,  emoji: '🌈' },
+  { id: 'vampire', name: 'Vampiro',     color: 0x992d22, price: 700,  emoji: '🧛' },
+  { id: 'zombie',  name: 'Zombi',       color: 0x2ecc71, price: 700,  emoji: '🧟' },
+  { id: 'ocean',   name: 'Océano',      color: 0x3498db, price: 800,  emoji: '🌊' },
+  { id: 'royal',   name: 'Realeza',     color: 0xf1c40f, price: 1000, emoji: '👑' },
+  { id: 'dragon',  name: 'Dragón',      color: 0xe74c3c, price: 1500, emoji: '🐉' },
+  { id: 'gold',    name: 'Legendario',  color: 0xffd700, price: 2500, emoji: '✨' }
+];
 
 const ROLE_COLOR_NAMES = {
   rojo: 0xe74c3c,
@@ -150,6 +165,7 @@ const afkBucket = createBucket('afk');
 const birthdaysBucket = createBucket('birthdays');
 const reactionRolesBucket = createBucket('reactionroles');
 const customRolesBucket = createBucket('customroles');
+const shopRolesBucket = createBucket('shoproles');
 
 const voiceSessions = new Map();
 
@@ -1042,8 +1058,8 @@ function helpEmbeds(includeModeration) {
     ['`!!robar <@usuario>`', 'Intenta robar monedas a un usuario (cada hora).'],
     ['`!!apostar <cantidad>`', 'Apostar monedas a cara o cruz.'],
     ['`!!duelo <@usuario> <cantidad>`', 'Duelo: el que gane se lleva la apuesta.'],
-    ['`!!shop`', 'Ver la tienda del servidor.'],
-    ['`!!comprar <número>`', 'Comprar un item de la tienda.'],
+    ['`!!shop`', 'Ver la tienda de roles de decoración.'],
+    ['`!!comprar <número>`', 'Comprar un tema de la tienda.'],
     ['`!!comprarrol <nombre> [color]`', `Crear/renombrar tu rol personalizado (${CUSTOM_ROLE_PRICE} monedas).`]
   ];
 
@@ -1433,40 +1449,89 @@ async function handleTrabajar(message) {
   await message.reply(`💼 Trabajaste y ganaste **${amount}** monedas. Ahora tienes **${getEco(message.guild.id, message.author.id).coins}**.`);
 }
 
-async function handleShop(message) {
-  if (SHOP_ITEMS.length === 0) {
-    return message.reply('🛒 La tienda está vacía. El admin puede configurar items con la variable `SHOP_ITEMS` (Nombre:rolID:precio|...).');
+function shopItems() {
+  const items = SHOP_THEMES.map(theme => ({ kind: 'theme', ...theme }));
+
+  for (const item of SHOP_ITEMS) {
+    items.push({ kind: 'env', ...item });
   }
 
-  const lines = SHOP_ITEMS.map((item, i) =>
-    `${i + 1}. **${item.name}** — ${item.price} monedas (rol <@&${item.roleId}>)`
-  );
+  return items;
+}
 
-  await message.reply(`🛒 **Tienda del servidor**\nUsa \`!!comprar <número>\`\n${lines.join('\n')}`);
+async function handleShop(message) {
+  const items = shopItems();
+
+  if (items.length === 0) {
+    return message.reply('🛒 La tienda está vacía.');
+  }
+
+  const lines = items.map((item, i) => {
+    if (item.kind === 'theme') {
+      return `${i + 1}. ${item.emoji} **${item.name}** — ${item.price} monedas`;
+    }
+
+    return `${i + 1}. **${item.name}** — ${item.price} monedas (rol <@&${item.roleId}>)`;
+  });
+
+  await message.reply(
+    `🛒 **Tienda del servidor** (roles de decoración, sin permisos extra)\n` +
+    `Usa \`!!comprar <número>\`\n\n${lines.join('\n')}`
+  );
 }
 
 async function handleComprar(message, rest) {
+  const items = shopItems();
   const index = parseInt(rest, 10);
 
-  if (!index || index < 1 || index > SHOP_ITEMS.length) {
+  if (!index || index < 1 || index > items.length) {
     return message.reply('❌ Uso: `!!comprar <número>` (mira `!!shop`).');
   }
 
-  const item = SHOP_ITEMS[index - 1];
+  const item = items[index - 1];
   const coins = getEco(message.guild.id, message.author.id).coins || 0;
 
   if (coins < item.price) {
     return message.reply(`❌ Te faltan **${item.price - coins}** monedas para **${item.name}**.`);
   }
 
-  const role = message.guild.roles.cache.get(item.roleId);
+  let role;
 
-  if (!role) {
-    return message.reply('❌ El rol de la tienda no existe en este servidor.');
+  if (item.kind === 'theme') {
+    const key = `${message.guild.id}:${item.id}`;
+    const existingId = shopRolesBucket.map.get(key);
+    let existing = existingId ? message.guild.roles.cache.get(existingId) : null;
+
+    if (!existing) {
+      try {
+        existing = await message.guild.roles.create({
+          name: item.name,
+          color: item.color,
+          permissions: [],
+          reason: `Tienda: ${item.name}`
+        });
+
+        await positionCustomRole(message.guild, existing);
+      } catch (error) {
+        console.error('Error creando rol de tienda:', error);
+        return message.reply('❌ No pude crear el rol de la tienda. No se te cobró nada.');
+      }
+
+      shopRolesBucket.map.set(key, existing.id);
+      shopRolesBucket.debounce();
+    }
+
+    role = existing;
+  } else {
+    role = message.guild.roles.cache.get(item.roleId);
+
+    if (!role) {
+      return message.reply('❌ El rol de la tienda no existe en este servidor.');
+    }
   }
 
-  if (message.member.roles.cache.has(item.roleId)) {
-    return message.reply('❌ Ya tienes ese rol.');
+  if (message.member.roles.cache.has(role.id)) {
+    return message.reply(`❌ Ya tienes el rol **${role.name}**.`);
   }
 
   const added = await message.member.roles.add(role)
@@ -1479,7 +1544,9 @@ async function handleComprar(message, rest) {
 
   addCoins(message.guild.id, message.author.id, -item.price);
 
-  await message.reply(`🛒 ¡Compraste **${item.name}** por **${item.price}** monedas! Te quedan **${getEco(message.guild.id, message.author.id).coins}**.`);
+  const emoji = item.kind === 'theme' ? item.emoji : '🛒';
+
+  await message.reply(`${emoji} ¡Compraste **${role.name}** por **${item.price}** monedas! Te quedan **${getEco(message.guild.id, message.author.id).coins}**.`);
 }
 
 function sanitizeRoleName(text) {
@@ -3727,7 +3794,8 @@ async function registerCommands() {
       afkBucket.init(),
       birthdaysBucket.init(),
       reactionRolesBucket.init(),
-      customRolesBucket.init()
+      customRolesBucket.init(),
+      shopRolesBucket.init()
     ]);
 
     await registerCommands();
@@ -3746,7 +3814,8 @@ async function saveAllBuckets() {
     afkBucket.save(),
     birthdaysBucket.save(),
     reactionRolesBucket.save(),
-    customRolesBucket.save()
+    customRolesBucket.save(),
+    shopRolesBucket.save()
   ]);
 }
 
