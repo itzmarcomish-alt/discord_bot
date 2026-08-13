@@ -93,17 +93,20 @@ const ROLE_COLOR_NAMES = {
   turquesa: 0x1abc9c
 };
 
-const LEVEL_ROLES = new Map(
-  (process.env.LEVEL_ROLES || '')
-    .split(',')
-    .map(pair => {
-      const [level, roleId] = pair.split(':').map(part => part.trim());
-      return level && /^\d+$/.test(level) && /^\d+$/.test(roleId || '')
-        ? [parseInt(level, 10), roleId]
-        : null;
-    })
-    .filter(Boolean)
-);
+const LEVEL_ROLES = new Map([
+  [20, '1537279245225566278'],
+  [50, '1537279365065482272'],
+  [75, '1537279459059830794'],
+  [100, '1537279542132088963']
+]);
+
+for (const pair of (process.env.LEVEL_ROLES || '').split(',').map(p => p.trim()).filter(Boolean)) {
+  const [level, roleId] = pair.split(':').map(part => part.trim());
+
+  if (/^\d+$/.test(level) && /^\d+$/.test(roleId || '')) {
+    LEVEL_ROLES.set(parseInt(level, 10), roleId);
+  }
+}
 
 function createBucket(name) {
   const map = new Map();
