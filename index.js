@@ -240,14 +240,6 @@ function isAdmin(member) {
   );
 }
 
-function adminRoleLabel() {
-  const firstId = ADMIN_ROLE_IDS.values().next().value;
-
-  if (firstId) return `<@&${firstId}>`;
-
-  return `**${ADMIN_ROLE_NAME}**`;
-}
-
 function parseDuration(value) {
   const match = /^(\d+)([smhd])$/.exec((value || '').trim().toLowerCase());
   if (!match) return null;
@@ -507,7 +499,7 @@ async function processEmoji(ctx, attachment) {
   }
 
   if (!isAdmin(ctx.member)) {
-    return ctx.reply(`❌ Necesitas tener el rol ${adminRoleLabel()} para usar esto.`);
+    return ctx.reply(`❌ Debes ser admin para usar este comando.`);
   }
 
   if (!attachment || !attachment.contentType?.startsWith('image/')) {
@@ -533,7 +525,7 @@ async function processSticker(ctx, attachment) {
   }
 
   if (!isAdmin(ctx.member)) {
-    return ctx.reply(`❌ Necesitas tener el rol ${adminRoleLabel()} para usar esto.`);
+    return ctx.reply(`❌ Debes ser admin para usar este comando.`);
   }
 
   if (!attachment || !attachment.contentType?.startsWith('image/')) {
@@ -1043,13 +1035,21 @@ async function grantXp(message) {
 
   if (info.level > data.level) {
     data.level = info.level;
+    console.log(`📈 ${message.author.tag} subió al nivel ${info.level} en ${message.guild.name}`);
 
-    const channel = await client.channels.fetch(LEVEL_CHANNEL_ID).catch(() => null);
+    const channel = await client.channels
+      .fetch(LEVEL_CHANNEL_ID)
+      .catch(error => {
+        console.error('📊 No pude obtener el canal de niveles:', error.message);
+        return null;
+      });
 
-    if (channel) {
+    if (!channel) {
+      console.error(`📊 Canal de niveles no disponible (ID: ${LEVEL_CHANNEL_ID})`);
+    } else {
       await channel
         .send(`🎉 ¡${message.author} subió al **nivel ${info.level}**!`)
-        .catch(console.error);
+        .catch(error => console.error('📊 No pude enviar el mensaje de nivel:', error.message));
     }
   }
 
@@ -2238,7 +2238,7 @@ client.on('messageCreate', async message => {
 
     if (!PUBLIC_COMMANDS.has(commandName) && !isAdmin(message.member)) {
       return message.reply(
-        `❌ Necesitas tener el rol ${adminRoleLabel()} para usar esto.`
+        `❌ Debes ser admin para usar este comando.`
       );
     }
 
@@ -2566,7 +2566,7 @@ client.on('interactionCreate', async interaction => {
 
       if (!isAdmin(interaction.member)) {
         return interaction.reply({
-          content: `❌ Necesitas tener el rol ${adminRoleLabel()} para usar esto.`,
+          content: `❌ Debes ser admin para usar este comando.`,
           ephemeral: true
         });
       }
