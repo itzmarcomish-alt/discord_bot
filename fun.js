@@ -467,7 +467,7 @@ async function createWantedImage(avatarUrl, name, reward) {
 
 async function createWelcomeImage(avatarUrl, username, serverName, memberCount) {
   const W = 800;
-  const H = 430;
+  const H = 470;
   const AV = 160;
   const cx = W / 2;
   const safeName = sanitize(username, 24);
@@ -498,10 +498,69 @@ async function createWelcomeImage(avatarUrl, username, serverName, memberCount) 
     '<circle cx="' + cx + '" cy="' + (avatarY + AV / 2) + '" r="' + (AV / 2 + 24) + '" fill="none" stroke="#ffffff" stroke-opacity="0.25" stroke-width="2"/>' +
     '<circle cx="' + cx + '" cy="' + (avatarY + AV / 2) + '" r="' + (AV / 2 + 14) + '" fill="none" stroke="url(#accent)" stroke-width="6"/>' +
     '<image x="' + (cx - AV / 2) + '" y="' + avatarY + '" width="' + AV + '" height="' + AV + '" xlink:href="data:image/png;base64,' + avatar + '"/>' +
-    '<text x="' + cx + '" y="' + (avatarY + AV + 52) + '" text-anchor="middle" font-family="Arial, sans-serif" font-size="24" font-weight="bold" fill="#ffffff">' + escapeXml(safeName) + '</text>' +
+    '<text x="' + cx + '" y="' + (avatarY + AV + 50) + '" text-anchor="middle" font-family="Arial, sans-serif" font-size="24" font-weight="bold" fill="#ffffff">' + escapeXml(safeName) + '</text>' +
     (memberCount
-      ? '<text x="' + cx + '" y="' + (avatarY + AV + 80) + '" text-anchor="middle" font-family="Arial, sans-serif" font-size="17" fill="#ffce54">¡Ya somos ' + memberCount + ' miembros!</text>'
+      ? '<text x="' + cx + '" y="' + (avatarY + AV + 92) + '" text-anchor="middle" font-family="Arial, sans-serif" font-size="17" fill="#ffce54">¡Ya somos ' + memberCount + ' miembros!</text>'
       : '')
+  , true);
+
+  return sharp(Buffer.from(svg)).png().toBuffer();
+}
+
+function wavingHand(x, y, dir) {
+  const flip = dir === -1 ? ' scale(-1 1)' : '';
+
+  return '<g transform="translate(' + x + ' ' + y + ')' + flip + '">' +
+    '<path d="M -58 30 A 34 34 0 0 1 -48 -18" fill="none" stroke="#ffffff" stroke-opacity="0.55" stroke-width="6" stroke-linecap="round"/>' +
+    '<path d="M -66 8 A 26 26 0 0 1 -56 -10" fill="none" stroke="#ffffff" stroke-opacity="0.3" stroke-width="5" stroke-linecap="round"/>' +
+    '<rect x="-9" y="38" width="18" height="34" rx="9" fill="#f8b878" stroke="#d9975a" stroke-width="2"/>' +
+    '<ellipse cx="0" cy="20" rx="25" ry="29" fill="#ffd54d" stroke="#e0b530" stroke-width="3"/>' +
+    '<rect x="-20" y="-34" width="13" height="46" rx="6.5" fill="#ffd54d" stroke="#e0b530" stroke-width="3"/>' +
+    '<rect x="-7" y="-40" width="14" height="52" rx="7" fill="#ffd54d" stroke="#e0b530" stroke-width="3"/>' +
+    '<rect x="6" y="-38" width="14" height="50" rx="7" fill="#ffd54d" stroke="#e0b530" stroke-width="3"/>' +
+    '<rect x="19" y="-30" width="12" height="42" rx="6" fill="#ffd54d" stroke="#e0b530" stroke-width="3"/>' +
+    '<rect x="-34" y="-2" width="17" height="30" rx="8.5" fill="#ffd54d" stroke="#e0b530" stroke-width="3" transform="rotate(-38 -25 13)"/>' +
+    '</g>';
+}
+
+async function createGoodbyeImage(avatarUrl, username, serverName) {
+  const W = 800;
+  const H = 470;
+  const AV = 150;
+  const cx = W / 2;
+  const safeName = sanitize(username, 24);
+  const safeServer = sanitize(serverName, 30);
+  const avatarY = 185;
+  const handY = avatarY + AV / 2;
+
+  const avatar = await circularAvatar(avatarUrl, AV, safeName);
+
+  const svg = svgDoc(W, H,
+    '<defs>' +
+    '<linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">' +
+    '<stop offset="0%" stop-color="#1b1b3a"/>' +
+    '<stop offset="55%" stop-color="#2b1055"/>' +
+    '<stop offset="100%" stop-color="#3a0ca3"/>' +
+    '</linearGradient>' +
+    '<linearGradient id="accent" x1="0" y1="0" x2="1" y2="0">' +
+    '<stop offset="0%" stop-color="#ffce54"/>' +
+    '<stop offset="100%" stop-color="#ff9d3c"/>' +
+    '</linearGradient>' +
+    '</defs>' +
+    '<rect width="' + W + '" height="' + H + '" fill="url(#bg)"/>' +
+    '<circle cx="' + (W * 0.12) + '" cy="' + (H * 0.2) + '" r="120" fill="none" stroke="#ffffff" stroke-opacity="0.06" stroke-width="2"/>' +
+    '<circle cx="' + (W * 0.9) + '" cy="' + (H * 0.78) + '" r="150" fill="none" stroke="#ffffff" stroke-opacity="0.05" stroke-width="2"/>' +
+    '<rect x="10" y="10" width="' + (W - 20) + '" height="' + (H - 20) + '" fill="none" stroke="#ffce54" stroke-width="2"/>' +
+    '<rect x="18" y="18" width="' + (W - 36) + '" height="' + (H - 36) + '" fill="none" stroke="#ffce54" stroke-opacity="0.35" stroke-width="1"/>' +
+    '<text x="' + cx + '" y="72" text-anchor="middle" font-family="Luckiest Guy" font-size="46" fill="url(#accent)">¡ADIÓS!</text>' +
+    '<text x="' + cx + '" y="128" text-anchor="middle" font-family="Rye" font-size="34" fill="#ffffff" letter-spacing="2">' + escapeXml(safeServer) + '</text>' +
+    '<circle cx="' + cx + '" cy="' + (avatarY + AV / 2) + '" r="' + (AV / 2 + 24) + '" fill="none" stroke="#ffffff" stroke-opacity="0.25" stroke-width="2"/>' +
+    '<circle cx="' + cx + '" cy="' + (avatarY + AV / 2) + '" r="' + (AV / 2 + 14) + '" fill="none" stroke="url(#accent)" stroke-width="6"/>' +
+    '<image x="' + (cx - AV / 2) + '" y="' + avatarY + '" width="' + AV + '" height="' + AV + '" xlink:href="data:image/png;base64,' + avatar + '"/>' +
+    wavingHand(cx - AV / 2 - 95, handY, 1) +
+    wavingHand(cx + AV / 2 + 95, handY, -1) +
+    '<text x="' + cx + '" y="' + (avatarY + AV + 44) + '" text-anchor="middle" font-family="Arial, sans-serif" font-size="26" font-weight="bold" fill="#ffffff">' + escapeXml(safeName) + '</text>' +
+    '<text x="' + cx + '" y="' + (avatarY + AV + 82) + '" text-anchor="middle" font-family="Luckiest Guy" font-size="24" fill="url(#accent)">¡Te irá mejor en el anexo!</text>'
   , true);
 
   return sharp(Buffer.from(svg)).png().toBuffer();
@@ -538,4 +597,5 @@ module.exports = {
   createWantedImage,
   createAchievementImage,
   createWelcomeImage,
+  createGoodbyeImage,
 };

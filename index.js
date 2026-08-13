@@ -2648,7 +2648,16 @@ client.on('guildMemberRemove', async member => {
       .replace(/\{username\}/g, member.user.tag)
       .replace(/\{server\}/g, member.guild.name);
 
-    await channel.send(text).catch(console.error);
+    const image = await funImages.createGoodbyeImage(
+      member.user.displayAvatarURL({ size: 512, extension: 'png' }),
+      member.user.username,
+      member.guild.name
+    );
+
+    await channel.send({
+      content: text,
+      files: [{ attachment: image, name: 'despedida.png' }]
+    }).catch(console.error);
   } catch (error) {
     console.error('Error en despedida:', error);
   }
