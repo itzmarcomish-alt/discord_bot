@@ -104,8 +104,84 @@ const ROLE_COLOR_NAMES = {
   blanco: 0xffffff,
   negro: 0x2c3e50,
   cyan: 0x1abc9c,
+  cian: 0x1abc9c,
   gris: 0x95a5a6,
-  turquesa: 0x1abc9c
+  turquesa: 0x1abc9c,
+  celeste: 0x87ceeb,
+  lila: 0xc8a2c8,
+  lavanda: 0xb57edc,
+  coral: 0xff7f50,
+  salmon: 0xfa8072,
+  marron: 0x795548,
+  cafe: 0x795548,
+  vino: 0x722f37,
+  burdeos: 0x800020,
+  granate: 0x800000,
+  dorado: 0xd4af37,
+  oro: 0xd4af37,
+  plata: 0xc0c0c0,
+  fucsia: 0xff00ff,
+  magenta: 0xff00ff,
+  violeta: 0x8f00ff,
+  indigo: 0x4b0082,
+  esmeralda: 0x50c878,
+  menta: 0x98ff98,
+  pistacho: 0x93c572,
+  mostaza: 0xffdb58,
+  oliva: 0x808000,
+  teal: 0x008080,
+  aguamarina: 0x7fffd4,
+  aqua: 0x00ffff,
+  lima: 0x32cd32,
+  beige: 0xf5f5dc,
+  crema: 0xfffdd0,
+  durazno: 0xffdab9,
+  carmesi: 0xdc143c,
+  caqui: 0xc3b091,
+  terracota: 0xe2725b,
+  cobre: 0xb87333,
+  bronce: 0xcd7f32,
+  fosforito: 0x39ff14,
+  neon: 0x39ff14,
+  'azul marino': 0x000080,
+  'azul cielo': 0x87ceeb,
+  'gris claro': 0xd3d3d3,
+  'gris oscuro': 0x696969,
+  'rosa pastel': 0xffb6c1,
+  'rosa choque': 0xff69b4,
+  red: 0xe74c3c,
+  blue: 0x3498db,
+  green: 0x2ecc71,
+  purple: 0x9b59b6,
+  pink: 0xe91e63,
+  orange: 0xe67e22,
+  yellow: 0xf1c40f,
+  white: 0xffffff,
+  black: 0x2c3e50,
+  gray: 0x95a5a6,
+  grey: 0x95a5a6,
+  turquoise: 0x1abc9c,
+  navy: 0x000080,
+  skyblue: 0x87ceeb,
+  lavender: 0xb57edc,
+  gold: 0xd4af37,
+  silver: 0xc0c0c0,
+  brown: 0x795548,
+  maroon: 0x800020,
+  crimson: 0xdc143c,
+  mint: 0x98ff98,
+  emerald: 0x50c878,
+  lime: 0x32cd32,
+  olive: 0x808000,
+  peach: 0xffdab9,
+  aquamarine: 0x7fffd4,
+  violet: 0x8f00ff,
+  fuchsia: 0xff00ff,
+  hotpink: 0xff69b4,
+  mustard: 0xffdb58,
+  khaki: 0xc3b091,
+  bronze: 0xcd7f32,
+  copper: 0xb87333
 };
 
 const LEVEL_ROLES = new Map([
@@ -1685,19 +1761,141 @@ function sanitizeRoleName(text) {
   return String(text || '').replace(/\s+/g, ' ').trim().slice(0, 32);
 }
 
-function parseRoleColor(input) {
-  if (!input) return null;
+const COLOR_MODIFIERS_DARK = new Set(['oscuro', 'marino', 'profundo', 'intenso', 'fuerte', 'bajo']);
+const COLOR_MODIFIERS_LIGHT = new Set(['claro', 'pastel', 'suave', 'brillante', 'brilloso', 'neon', 'fosforito', 'choque']);
+const COLOR_MODIFIERS_ALL = new Set([...COLOR_MODIFIERS_DARK, ...COLOR_MODIFIERS_LIGHT]);
 
-  const t = String(input).trim().replace(/^#/, '');
+function normalizeColorInput(str) {
+  return String(str)
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
 
-  if (/^[0-9a-f]{6}$/i.test(t)) {
-    return parseInt(t, 16);
-  }
-
-  const name = t.toLowerCase();
+function colorLookup(name) {
+  if (!name) return undefined;
 
   if (Object.prototype.hasOwnProperty.call(ROLE_COLOR_NAMES, name)) {
     return ROLE_COLOR_NAMES[name];
+  }
+
+  const stem = name.replace(/[oa]$/, '');
+
+  if (stem && stem !== name && Object.prototype.hasOwnProperty.call(ROLE_COLOR_NAMES, stem)) {
+    return ROLE_COLOR_NAMES[stem];
+  }
+
+  const diminutive = name.replace(/(ito|ita|illo|illa|ico|uca)$/, '');
+
+  if (diminutive && diminutive !== name && Object.prototype.hasOwnProperty.call(ROLE_COLOR_NAMES, diminutive)) {
+    return ROLE_COLOR_NAMES[diminutive];
+  }
+
+  return undefined;
+}
+
+function lightenColor(color, factor) {
+  const r = Math.round(((color >> 16) & 0xff) + (255 - ((color >> 16) & 0xff)) * factor);
+  const g = Math.round(((color >> 8) & 0xff) + (255 - ((color >> 8) & 0xff)) * factor);
+  const b = Math.round((color & 0xff) + (255 - (color & 0xff)) * factor);
+  return (r << 16) | (g << 8) | b;
+}
+
+function darkenColor(color, factor) {
+  const r = Math.round(((color >> 16) & 0xff) * (1 - factor));
+  const g = Math.round(((color >> 8) & 0xff) * (1 - factor));
+  const b = Math.round((color & 0xff) * (1 - factor));
+  return (r << 16) | (g << 8) | b;
+}
+
+function editDistance(a, b) {
+  const m = a.length;
+  const n = b.length;
+
+  if (m === 0) return n;
+  if (n === 0) return m;
+
+  const dp = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+
+  for (let i = 0; i <= m; i++) dp[i][0] = i;
+  for (let j = 0; j <= n; j++) dp[0][j] = j;
+
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      dp[i][j] = Math.min(dp[i - 1][j] + 1, dp[i][j - 1] + 1, dp[i - 1][j - 1] + cost);
+    }
+  }
+
+  return dp[m][n];
+}
+
+function parseRoleColor(input) {
+  if (!input) return null;
+
+  const t = String(input).trim();
+
+  const hex = t.replace(/^#/, '').replace(/^0x/i, '');
+
+  if (/^[0-9a-f]{6}$/i.test(hex)) {
+    return parseInt(hex, 16);
+  }
+
+  if (/^[0-9a-f]{8}$/i.test(hex)) {
+    return parseInt(hex.slice(0, 6), 16);
+  }
+
+  if (/^[0-9a-f]{3}$/i.test(hex)) {
+    const [r, g, b] = hex.split('').map(c => parseInt(c + c, 16));
+    return (r << 16) | (g << 8) | b;
+  }
+
+  const norm = normalizeColorInput(t);
+
+  const exact = colorLookup(norm);
+
+  if (exact !== undefined) return exact;
+
+  const words = norm.split(' ').filter(Boolean);
+  const hasDark = words.some(w => COLOR_MODIFIERS_DARK.has(w));
+  const hasLight = words.some(w => COLOR_MODIFIERS_LIGHT.has(w));
+  const baseName = words.filter(w => !COLOR_MODIFIERS_ALL.has(w)).join(' ');
+
+  if (baseName && baseName !== norm) {
+    const base = colorLookup(baseName);
+
+    if (base !== undefined) {
+      let color = base;
+
+      if (hasDark) color = darkenColor(color, 0.5);
+      if (hasLight) color = lightenColor(color, 0.5);
+
+      return color;
+    }
+  }
+
+  if (words.length === 1) {
+    let bestDist = Infinity;
+    let best = null;
+    let count = 0;
+
+    for (const key of Object.keys(ROLE_COLOR_NAMES)) {
+      if (key.includes(' ')) continue;
+
+      const dist = editDistance(words[0], normalizeColorInput(key));
+
+      if (dist < bestDist) {
+        bestDist = dist;
+        best = ROLE_COLOR_NAMES[key];
+        count = 1;
+      } else if (dist === bestDist) {
+        count += 1;
+      }
+    }
+
+    if (bestDist <= 1 && count === 1) return best;
   }
 
   return null;
@@ -1738,15 +1936,27 @@ async function handleComprarRol(message, rest) {
     return message.reply(
       `❌ Uso: \`!!comprarrol <nombre> [color]\`\n` +
       `Ejemplos: \`!!comprarrol Mi Rolete azul\` o \`!!comprarrol Legendario #ff0000\`\n` +
-      `Colores: rojo, azul, verde, morado, rosa, naranja, amarillo, blanco, negro, cyan, gris, turquesa o un hex (#rrggbb).\n` +
+      `Colores: rojo, azul, verde, morado, rosa, naranja, amarillo, blanco, negro, cyan, gris, turquesa, celeste, lila, coral, marrón, dorado, plata, violeta, esmeralda, fucsia... o un hex (#rrggbb).\n` +
+      `También funcionan \`claro\`/\`oscuro\` (ej. "verde oscuro") y errores de tipeo.\n` +
       `Costo: **${CUSTOM_ROLE_PRICE}** monedas. Si ya tienes uno, lo actualiza sin volver a cobrar.`
     );
   }
 
   const words = rest.trim().split(/\s+/);
-  const lastWord = words[words.length - 1];
-  const color = parseRoleColor(lastWord);
-  const rawName = color !== null ? words.slice(0, -1).join(' ') : rest.trim();
+  let color = null;
+  let colorStart = words.length;
+
+  for (let i = 0; i < words.length; i++) {
+    const parsed = parseRoleColor(words.slice(i).join(' '));
+
+    if (parsed !== null) {
+      color = parsed;
+      colorStart = i;
+      break;
+    }
+  }
+
+  const rawName = (color !== null ? words.slice(0, colorStart).join(' ') : rest.trim()).trim() || rest.trim();
 
   if (!rawName) {
     return message.reply('❌ Escribe un nombre válido para tu rol.');
