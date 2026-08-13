@@ -759,6 +759,11 @@ async function runAntiScam(message) {
 
   if (SCAM_EXCLUDED_CHANNELS.has(message.channelId)) return null;
 
+  if ((message.content || '').trim().startsWith('!!')) {
+    markSeen(message.guild.id, message.author.id);
+    return null;
+  }
+
   try {
     if (isAdmin(message.member)) {
       markSeen(message.guild.id, message.author.id);
