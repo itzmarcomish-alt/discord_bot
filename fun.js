@@ -276,13 +276,13 @@ async function createQuoteImage(content, authorName, avatarUrl) {
   const LINE_HEIGHT = 44;
   const AVATAR_SIZE = 120;
 
-  const lines = wrapText(sanitize(content, 300), 40);
+  const lines = wrapText(sanitize(content, 300), 70);
 
   lines[0] = '"' + lines[0];
   lines[lines.length - 1] = lines[lines.length - 1] + '"';
 
   const maxLineChars = Math.max(...lines.map(line => line.length));
-  const WIDTH = Math.max(420, Math.min(760, maxLineChars * 17 + PADDING * 2));
+  const WIDTH = Math.max(420, Math.min(1400, maxLineChars * 17 + PADDING * 2));
 
   const textBlockHeight = lines.length * LINE_HEIGHT;
   const quoteStart = PADDING + 40;
