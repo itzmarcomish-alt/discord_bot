@@ -3406,7 +3406,9 @@ client.on('messageCreate', async message => {
     if (!message.guild) return;
 
     if (commandName === 'pene') {
-      return message.reply('comes');
+      await message.reply('comes').catch(() => {});
+      await message.member.timeout(10 * 1000, 'Dijo !!pene').catch(() => {});
+      return;
     }
 
     if (!PUBLIC_COMMANDS.has(commandName) && !isAdmin(message.member)) {
