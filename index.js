@@ -1123,7 +1123,9 @@ function helpEmbeds(includeModeration) {
     ['`!!vc <@usuario> <#canal>`', 'Mueve a un usuario a un canal de voz.'],
     ['`!!antiraid` / `!!antiraid off`', 'Estado del anti-raid o lo desactiva.'],
     ['`!!setnivel <@usuario> <nivel>`', 'Fija el nivel de un usuario (asigna el rol en su próximo mensaje).'],
-    ['`!!setcoins <@usuario> <cantidad> [banco]`', 'Fija las monedas de un usuario (agrega `banco` para el banco).']
+    ['`!!setcoins <@usuario> <cantidad> [banco]`', 'Fija las monedas de un usuario (agrega `banco` para el banco).'],
+    ['`!!setcumple <@usuario> <día/mes>`', 'Establece o cambia el cumpleaños de un usuario.'],
+    ['`!!delcumple <@usuario>`', 'Elimina el cumpleaños registrado de un usuario.']
   ];
 
   const utilities = [
@@ -2502,6 +2504,66 @@ async function handleCumple(message, rest) {
   birthdaysBucket.debounce();
 
   await message.reply(`🎂 ¡Registrado! Tu cumpleaños es el **${birthday.day} de ${monthName}**.`);
+}
+
+async function handleSetCumple(message, rest) {
+  const match = /^(\S+)\s+(.+)$/.exec(rest.trim());
+
+  if (!match) {
+    return message.reply('❌ Uso: `!!setcumple <@usuario> <día/mes>` (ej: `!!setcumple @mark 24/12`)');
+  }
+
+  const targetId = parseUserId(match[1]);
+
+  if (!targetId) {
+    return message.reply('❌ Usuario no válido. Menciona al usuario o pasa su ID.');
+  }
+
+  const birthday = parseBirthday(match[2]);
+
+  if (!birthday) {
+    return message.reply('❌ Fecha no válida. Usa `día/mes` (ej: `24/12`).');
+  }
+
+  const monthName = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'][birthday.month - 1];
+
+  birthdaysBucket.map.set(`${message.guild.id}:${targetId}`, birthday);
+  birthdaysBucket.debounce();
+
+  await message.reply(`🎂 Cumpleaños de **<@${targetId}>** establecido: **${birthday.day} de ${monthName}**.`);
+
+  await logModAction(
+    message.guild,
+    message.author,
+    '🎂 Cumpleaños asignado',
+    `**Usuario:** <@${targetId}>\n**Fecha:** ${birthday.day}/${birthday.month}`
+  );
+}
+
+async function handleDelCumple(message, rest) {
+  const targetId = parseUserId(rest.trim());
+
+  if (!targetId) {
+    return message.reply('❌ Uso: `!!delcumple <@usuario>`');
+  }
+
+  const key = `${message.guild.id}:${targetId}`;
+
+  if (!birthdaysBucket.map.has(key)) {
+    return message.reply('❌ Ese usuario no tiene cumpleaños registrado.');
+  }
+
+  birthdaysBucket.map.delete(key);
+  birthdaysBucket.debounce();
+
+  await message.reply(`🗑️ Cumpleaños de **<@${targetId}>** eliminado.`);
+
+  await logModAction(
+    message.guild,
+    message.author,
+    '🗑️ Cumpleaños eliminado',
+    `**Usuario:** <@${targetId}>`
+  );
 }
 
 async function handleStats(message, rest) {
@@ -4106,7 +4168,7 @@ client.on('messageCreate', async message => {
 
     if (!content.startsWith('!!')) return;
 
-    const commandMatch = /^!!(emoji|sticker|ban|kick|timeout|unban|warn|warns|delwarn|slowmode|lock|unlock|announce|avatar|userinfo|serverinfo|ping|poll|encuesta|say|8ball|dado|moneda|slap|quote|firma|polaroid|wanted|logro|mute|unmute|vc|antiraid|despedida|nivel|niveles|help|canales|afk|bal|daily|trabajar|shop|comprar|comprarrol|vender|apostar|robar|cazar|duelo|racha|cumple|stats|reactionroles|setnivel|setcoins|banco|depositar|retirar|transferir|pene)\b/i.exec(content);
+    const commandMatch = /^!!(emoji|sticker|ban|kick|timeout|unban|warn|warns|delwarn|slowmode|lock|unlock|announce|avatar|userinfo|serverinfo|ping|poll|encuesta|say|8ball|dado|moneda|slap|quote|firma|polaroid|wanted|logro|mute|unmute|vc|antiraid|despedida|nivel|niveles|help|canales|afk|bal|daily|trabajar|shop|comprar|comprarrol|vender|apostar|robar|cazar|duelo|racha|cumple|setcumple|delcumple|stats|reactionroles|setnivel|setcoins|banco|depositar|retirar|transferir|pene)\b/i.exec(content);
 
     if (!commandMatch) return;
 
@@ -4398,6 +4460,16 @@ client.on('messageCreate', async message => {
 
     if (commandName === 'cumple') {
       await handleCumple(message, rest);
+      return;
+    }
+
+    if (commandName === 'setcumple') {
+      await handleSetCumple(message, rest);
+      return;
+    }
+
+    if (commandName === 'delcumple') {
+      await handleDelCumple(message, rest);
       return;
     }
 
