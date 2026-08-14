@@ -3053,11 +3053,17 @@ async function handleAnnounce(message, rest) {
     : null;
 
   if (logChannel) {
-    await logChannel
-      .send({
+    try {
+      await logChannel.send({
+        content: `📢 **Anuncio** — ${message.channel}\n@everyone\n${bigText}\n\n— *${message.author.tag}*`
+      });
+    } catch (error) {
+      console.error('No pude mencionar a @everyone en el registro (¿permiso de mencionar todos?):', error.message);
+
+      await logChannel.send({
         content: `📢 **Anuncio** — ${message.channel}\n${bigText}\n\n— *${message.author.tag}*`
-      })
-      .catch(console.error);
+      });
+    }
   }
 }
 
