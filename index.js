@@ -3101,10 +3101,43 @@ async function handleSlowmode(message, rest) {
 }
 
 async function handleLockState(message, locked) {
+  const guild = message.guild;
+  const apply = [];
+
+  if (locked) {
+    apply.push({ target: guild.roles.everyone, options: { SendMessages: false } });
+
+    for (const roleId of MEMBER_DENIED_ROLES) {
+      const role = guild.roles.cache.get(roleId);
+
+      if (role) apply.push({ target: role, options: { SendMessages: false } });
+    }
+
+    for (const roleId of adminRoleIdsIn(guild)) {
+      const role = guild.roles.cache.get(roleId);
+
+      if (role) apply.push({ target: role, options: { SendMessages: true } });
+    }
+  } else {
+    apply.push({ target: guild.roles.everyone, options: { SendMessages: null } });
+
+    for (const roleId of MEMBER_DENIED_ROLES) {
+      const role = guild.roles.cache.get(roleId);
+
+      if (role) apply.push({ target: role, options: { SendMessages: null } });
+    }
+
+    for (const roleId of adminRoleIdsIn(guild)) {
+      const role = guild.roles.cache.get(roleId);
+
+      if (role) apply.push({ target: role, options: { SendMessages: null } });
+    }
+  }
+
   try {
-    await message.channel.permissionOverwrites.edit(message.guild.roles.everyone, {
-      SendMessages: !locked
-    });
+    for (const { target, options } of apply) {
+      await message.channel.permissionOverwrites.edit(target, options);
+    }
 
     await message.channel.send(locked ? '🔒 Canal bloqueado.' : '🔓 Canal desbloqueado.');
 
