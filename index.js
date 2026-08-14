@@ -79,18 +79,18 @@ const SHOP_ITEMS = (process.env.SHOP_ITEMS || '')
 const CUSTOM_ROLE_PRICE = parseInt(process.env.CUSTOM_ROLE_PRICE, 10) || 30000;
 
 const SHOP_THEMES = [
-  { id: 'emperador', name: 'Emperador',   color: 0xf1c40f, price: 29500, emoji: '👑' },
-  { id: 'titan',     name: 'Titán',       color: 0x9b59b6, price: 29000, emoji: '⚔️' },
-  { id: 'leon',      name: 'León',        color: 0xe67e22, price: 28500, emoji: '🦁' },
-  { id: 'dragon',    name: 'Dragón',      color: 0xe74c3c, price: 28000, emoji: '🐉' },
-  { id: 'vikingo',   name: 'Vikingo',     color: 0x2ecc71, price: 27500, emoji: '🪓' },
-  { id: 'samurai',   name: 'Samurái',     color: 0x95a5a6, price: 27000, emoji: '🗡️' },
-  { id: 'rey',       name: 'Rey',         color: 0xffd700, price: 26500, emoji: '🏰' },
-  { id: 'espartano', name: 'Espartano',   color: 0xe91e63, price: 26000, emoji: '🛡️' },
-  { id: 'lobo',      name: 'Lobo',        color: 0x3498db, price: 25500, emoji: '🐺' },
-  { id: 'guerrero',  name: 'Guerrero',    color: 0x1abc9c, price: 25000, emoji: '💪' },
-  { id: 'fenix',     name: 'Fénix',       color: 0x992d22, price: 24500, emoji: '🔥' },
-  { id: 'cazador',   name: 'Cazador',     color: 0x27ae60, price: 24000, emoji: '🏹' }
+  { id: 'emperador', name: 'Emperador',   color: 0xf1c40f, price: 25000, emoji: '👑' },
+  { id: 'titan',     name: 'Titán',       color: 0x9b59b6, price: 23000, emoji: '⚔️' },
+  { id: 'leon',      name: 'León',        color: 0xe67e22, price: 21000, emoji: '🦁' },
+  { id: 'dragon',    name: 'Dragón',      color: 0xe74c3c, price: 19000, emoji: '🐉' },
+  { id: 'vikingo',   name: 'Vikingo',     color: 0x2ecc71, price: 17000, emoji: '🪓' },
+  { id: 'samurai',   name: 'Samurái',     color: 0x95a5a6, price: 15000, emoji: '🗡️' },
+  { id: 'rey',       name: 'Rey',         color: 0xffd700, price: 13000, emoji: '🏰' },
+  { id: 'espartano', name: 'Espartano',   color: 0xe91e63, price: 11000, emoji: '🛡️' },
+  { id: 'lobo',      name: 'Lobo',        color: 0x3498db, price: 9000,  emoji: '🐺' },
+  { id: 'guerrero',  name: 'Guerrero',    color: 0x1abc9c, price: 7000,  emoji: '💪' },
+  { id: 'fenix',     name: 'Fénix',       color: 0x992d22, price: 6000,  emoji: '🔥' },
+  { id: 'cazador',   name: 'Cazador',     color: 0x27ae60, price: 5000,  emoji: '🏹' }
 ];
 
 const ROLE_COLOR_NAMES = {
