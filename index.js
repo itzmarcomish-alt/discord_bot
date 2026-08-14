@@ -3154,8 +3154,12 @@ async function handleLockState(message, locked) {
   }
 
   try {
-    for (const { target, options } of apply) {
-      await message.channel.permissionOverwrites.edit(target, options);
+    const threads = message.channel.threads ? message.channel.threads.cache.values() : [];
+
+    for (const container of [message.channel, ...threads]) {
+      for (const { target, options } of apply) {
+        await container.permissionOverwrites.edit(target, options);
+      }
     }
 
     await message.channel.send(locked ? '🔒 Canal bloqueado.' : '🔓 Canal desbloqueado.');
