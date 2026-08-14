@@ -2799,12 +2799,44 @@ async function handleMsgTimeout(message, rest) {
   }
 }
 
+const BULK_MAX_AGE = 14 * 24 * 60 * 60 * 1000;
+
+async function deleteOldMessages(msgs) {
+  let removed = 0;
+
+  for (let i = 0; i < msgs.length; i += 3) {
+    const chunk = msgs.slice(i, i + 3);
+
+    const results = await Promise.allSettled(chunk.map(async msg => {
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          await msg.delete();
+          return true;
+        } catch (error) {
+          const retryAfter = error?.retryAfter ? error.retryAfter * 1000 : 0;
+
+          if (error?.status === 429 && attempt < 2) {
+            await new Promise(res => setTimeout(res, retryAfter + 750));
+            continue;
+          }
+
+          return false;
+        }
+      }
+
+      return false;
+    }));
+
+    removed += results.filter(r => r.status === 'fulfilled' && r.value === true).length;
+  }
+
+  return removed;
+}
+
 async function purgeChannelMessages(channel, count) {
   let deleted = 0;
   let before;
-  const oldOnes = [];
   const now = Date.now();
-  const BULK_MAX_AGE = 14 * 24 * 60 * 60 * 1000;
 
   let nextFetch = channel.messages.fetch({ limit: 100, before }).catch(() => null);
 
@@ -2818,6 +2850,7 @@ async function purgeChannelMessages(channel, count) {
     nextFetch = channel.messages.fetch({ limit: 100, before: batch.last().id }).catch(() => null);
 
     const bulkable = msgs.filter(msg => now - msg.createdTimestamp < BULK_MAX_AGE);
+    const old = msgs.filter(msg => now - msg.createdTimestamp >= BULK_MAX_AGE);
 
     if (bulkable.length >= 2) {
       const result = await channel.bulkDelete(bulkable, true).catch(() => null);
@@ -2827,18 +2860,10 @@ async function purgeChannelMessages(channel, count) {
       if (ok) deleted += 1;
     }
 
-    for (const msg of msgs) {
-      if (now - msg.createdTimestamp >= BULK_MAX_AGE) oldOnes.push(msg);
-    }
+    deleted += await deleteOldMessages(old);
 
     if (batch.size < 100) break;
     before = batch.last().id;
-  }
-
-  for (let i = 0; i < oldOnes.length; i += 5) {
-    const chunk = oldOnes.slice(i, i + 5);
-    const results = await Promise.allSettled(chunk.map(msg => msg.delete()));
-    deleted += results.filter(r => r.status === 'fulfilled').length;
   }
 
   return deleted;
@@ -2848,9 +2873,7 @@ async function purgeUserMessages(channel, targetId, count) {
   let deleted = 0;
   let remaining = count;
   let before;
-  const oldOnes = [];
   const now = Date.now();
-  const BULK_MAX_AGE = 14 * 24 * 60 * 60 * 1000;
 
   let nextFetch = channel.messages.fetch({ limit: 100, before }).catch(() => null);
 
@@ -2887,17 +2910,11 @@ async function purgeUserMessages(channel, targetId, count) {
       }
     }
 
-    oldOnes.push(...old);
-
-    if (batch.size < 100) break;
-  }
-
-  for (let i = 0; i < oldOnes.length; i += 5) {
-    const chunk = oldOnes.slice(i, i + 5);
-    const results = await Promise.allSettled(chunk.map(msg => msg.delete()));
-    const removed = results.filter(r => r.status === 'fulfilled').length;
+    const removed = await deleteOldMessages(old);
     deleted += removed;
     remaining -= removed;
+
+    if (batch.size < 100) break;
   }
 
   return deleted;
@@ -2920,7 +2937,7 @@ async function handleSlashEraseChat(interaction) {
 
   const deleted = await purgeChannelMessages(channel, count);
 
-  await interaction.editReply(`✅ ${deleted} mensaje(s) eliminado(s).`);
+  await interaction.editReply(`✅ ${deleted} mensaje(s) eliminado(s).`).catch(() => {});
 
   await logModAction(
     guild,
@@ -2947,12 +2964,13 @@ async function handleSlashPurgeUser(interaction) {
   const member = await getGuildMember(guild, targetId);
   const name = member?.user.tag || targetId;
 
+  await interaction.deferReply({ ephemeral: true });
+
   const deleted = await purgeUserMessages(channel, targetId, count);
 
-  await interaction.reply({
-    content: `✅ Se eliminaron **${deleted}** mensaje(s) de **${name}**.`,
-    ephemeral: true
-  });
+  await interaction.editReply({
+    content: `✅ Se eliminaron **${deleted}** mensaje(s) de **${name}**.`
+  }).catch(() => {});
 
   await logModAction(
     guild,
