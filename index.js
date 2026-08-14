@@ -286,7 +286,7 @@ const PUBLIC_COMMANDS = new Set([
   'help', '8ball', 'dado', 'moneda', 'slap', 'quote', 'firma', 'polaroid', 'wanted', 'logro',
   'avatar', 'userinfo', 'serverinfo', 'ping',
   'poll', 'say', 'nivel', 'niveles',
-  'afk', 'bal', 'daily', 'trabajar', 'shop', 'comprar', 'comprarrol', 'apostar',
+  'afk', 'bal', 'daily', 'trabajar', 'shop', 'comprar', 'comprarrol', 'vender', 'apostar',
   'robar', 'cazar', 'duelo', 'racha', 'cumple', 'stats',
   'banco', 'depositar', 'retirar', 'transferir'
 ]);
@@ -1162,7 +1162,8 @@ function helpEmbeds(includeModeration) {
     ['`!!shop`', 'Tienda: 20 roles de decoración de 5,000 a 40,000 monedas.'],
     ['`!!comprar <número>`', 'Compra un rol de la tienda (paga con billetera + banco).'],
     ['`!!comprarrol <nombre> [color]`', `Crea tu rol personalizado, o renómbralo/cambiá su color sin cobrar (${CUSTOM_ROLE_PRICE} monedas al crearlo).`],
-    ['`!!comprarrol nuevo <nombre> [color]`', 'Crea OTRO rol personalizado aparte (te cobra el precio).']
+    ['`!!comprarrol nuevo <nombre> [color]`', 'Crea OTRO rol personalizado aparte (te cobra el precio).'],
+    ['`!!vender <tema>` o `!!vender rol`', 'Vende un rol de la tienda o tu rol personalizado y recibe el 25% de lo pagado en el banco.']
   ];
 
   const fun = [
@@ -2145,6 +2146,88 @@ async function handleComprarRol(message, rest) {
       ? 'Puedes crear otro distinto con `!!comprarrol nuevo`. '
       : 'Cambia nombre o color con `!!comprarrol`. ') +
     `Te quedan **${totalCoins(message.guild.id, message.author.id)}** monedas (billetera + banco).`
+  );
+}
+
+async function handleVender(message, rest) {
+  const member = message.member;
+  const guild = message.guild;
+  const input = rest.trim().toLowerCase();
+
+  if (!input) {
+    return message.reply('❌ Uso: `!!vender <tema>` (mira `!!shop`) o `!!vender rol` para tu rol personalizado.');
+  }
+
+  const normalize = s => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+
+  let role;
+  let refund;
+  let kind;
+  let isCustom = false;
+
+  if (/^(rol|personalizado|custom|mio|propio)$/.test(input)) {
+    const key = ecoKey(guild.id, message.author.id);
+    const customId = customRolesBucket.map.get(key);
+
+    if (!customId) {
+      return message.reply('❌ No tienes un rol personalizado que vender. Crea uno con `!!comprarrol`.');
+    }
+
+    role = guild.roles.cache.get(customId);
+
+    if (!role) {
+      customRolesBucket.map.delete(key);
+      customRolesBucket.debounce();
+      return message.reply('❌ Tu rol personalizado ya no existe en el servidor.');
+    }
+
+    refund = Math.floor(CUSTOM_ROLE_PRICE / 4);
+    kind = 'tu rol personalizado';
+    isCustom = true;
+  } else {
+    const item = SHOP_THEMES.find(theme => normalize(theme.name).toLowerCase() === normalize(input));
+
+    if (!item) {
+      return message.reply(
+        '❌ No encontré ese rol para vender. Usa `!!vender <tema>` (nombres en `!!shop`) o `!!vender rol` para tu rol personalizado.'
+      );
+    }
+
+    role = findShopRole(guild, item);
+
+    if (!role) {
+      return message.reply(`❌ El rol de tienda **${item.name}** no existe en este servidor.`);
+    }
+
+    refund = Math.floor(item.price / 4);
+    kind = `el rol de tienda **${item.name}**`;
+  }
+
+  if (!member.roles.cache.has(role.id)) {
+    return message.reply(`❌ No tienes ${kind} asignado.`);
+  }
+
+  try {
+    await member.roles.remove(role);
+  } catch (error) {
+    console.error('Error quitando rol al vender:', error);
+    return message.reply('❌ No pude quitarte el rol. No recibiste nada.');
+  }
+
+  if (isCustom) {
+    customRolesBucket.map.delete(ecoKey(guild.id, message.author.id));
+    customRolesBucket.debounce();
+    role.delete('Rol vendido').catch(() => {});
+  }
+
+  const data = getEco(guild.id, message.author.id);
+  data.bank = (data.bank || 0) + refund;
+  economyBucket.map.set(ecoKey(guild.id, message.author.id), data);
+  economyBucket.debounce();
+
+  await message.reply(
+    `✅ Vendiste ${kind} y recibiste **${refund}** monedas (el 25% de lo que pagaste). Se fueron directo al banco.\n` +
+    `Billetera: **${data.coins || 0}** · Banco: **${data.bank}**`
   );
 }
 
@@ -3857,7 +3940,7 @@ client.on('messageCreate', async message => {
 
     if (!content.startsWith('!!')) return;
 
-    const commandMatch = /^!!(emoji|sticker|ban|kick|timeout|unban|warn|warns|delwarn|slowmode|lock|unlock|announce|avatar|userinfo|serverinfo|ping|poll|say|8ball|dado|moneda|slap|quote|firma|polaroid|wanted|logro|mute|unmute|vc|antiraid|despedida|nivel|niveles|help|canales|afk|bal|daily|trabajar|shop|comprar|comprarrol|apostar|robar|cazar|duelo|racha|cumple|stats|reactionroles|setnivel|setcoins|banco|depositar|retirar|transferir|pene)\b/i.exec(content);
+    const commandMatch = /^!!(emoji|sticker|ban|kick|timeout|unban|warn|warns|delwarn|slowmode|lock|unlock|announce|avatar|userinfo|serverinfo|ping|poll|say|8ball|dado|moneda|slap|quote|firma|polaroid|wanted|logro|mute|unmute|vc|antiraid|despedida|nivel|niveles|help|canales|afk|bal|daily|trabajar|shop|comprar|comprarrol|vender|apostar|robar|cazar|duelo|racha|cumple|stats|reactionroles|setnivel|setcoins|banco|depositar|retirar|transferir|pene)\b/i.exec(content);
 
     if (!commandMatch) return;
 
@@ -4109,6 +4192,11 @@ client.on('messageCreate', async message => {
 
     if (commandName === 'comprarrol') {
       await handleComprarRol(message, rest);
+      return;
+    }
+
+    if (commandName === 'vender') {
+      await handleVender(message, rest);
       return;
     }
 
