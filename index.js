@@ -1931,14 +1931,29 @@ function randomRoleColor() {
   return colors[Math.floor(Math.random() * colors.length)];
 }
 
-async function positionCustomRole(guild, role) {
+async function positionCustomRole(guild, role, aboveTopLevel) {
   let anchor = null;
 
-  for (const id of MEMBER_DENIED_ROLES) {
-    const candidate = guild.roles.cache.get(id);
+  if (aboveTopLevel) {
+    let bestLevel = -1;
 
-    if (candidate && (!anchor || candidate.position > anchor.position)) {
-      anchor = candidate;
+    for (const [level, id] of LEVEL_ROLES) {
+      const candidate = guild.roles.cache.get(id);
+
+      if (candidate && level > bestLevel) {
+        bestLevel = level;
+        anchor = candidate;
+      }
+    }
+  }
+
+  if (!anchor) {
+    for (const id of MEMBER_DENIED_ROLES) {
+      const candidate = guild.roles.cache.get(id);
+
+      if (candidate && (!anchor || candidate.position > anchor.position)) {
+        anchor = candidate;
+      }
     }
   }
 
@@ -2012,6 +2027,8 @@ async function handleComprarRol(message, rest) {
         await existingRole.setColor(color);
       }
 
+      await positionCustomRole(message.guild, existingRole, true);
+
       role = existingRole;
     } else {
       role = await message.guild.roles.create({
@@ -2021,7 +2038,7 @@ async function handleComprarRol(message, rest) {
         reason: `Rol personalizado de ${message.author.tag}`
       });
 
-      await positionCustomRole(message.guild, role);
+      await positionCustomRole(message.guild, role, true);
     }
   } catch (error) {
     console.error('Error creando rol personalizado:', error);
