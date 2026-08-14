@@ -3048,12 +3048,17 @@ async function handleAnnounce(message, rest) {
     });
   }
 
-  await logModAction(
-    message.guild,
-    message.author,
-    '📢 Anuncio',
-    `**Canal:** ${message.channel}\n**Texto:** ${shortenText(text, 1024)}`
-  );
+  const logChannel = MODLOG_CHANNEL_ID
+    ? await client.channels.fetch(MODLOG_CHANNEL_ID).catch(() => null)
+    : null;
+
+  if (logChannel) {
+    await logChannel
+      .send({
+        content: `📢 **Anuncio** — ${message.channel}\n${bigText}\n\n— *${message.author.tag}*`
+      })
+      .catch(console.error);
+  }
 }
 
 async function handleAvatar(message, rest) {
