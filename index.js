@@ -389,26 +389,26 @@ const commands = [
 
   new SlashCommandBuilder()
     .setName('erasechat')
-    .setDescription('Elimina los últimos N mensajes del canal (máx 1000).')
+    .setDescription('Elimina los últimos N mensajes del canal (máx 10000).')
     .addIntegerOption(option =>
       option
         .setName('cantidad')
-        .setDescription('Número de mensajes a eliminar (1-1000)')
+        .setDescription('Número de mensajes a eliminar (1-10000)')
         .setMinValue(1)
-        .setMaxValue(1000)
+        .setMaxValue(10000)
         .setRequired(true)
     )
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
 
   new SlashCommandBuilder()
     .setName('purgeusuario')
-    .setDescription('Elimina mensajes recientes de un usuario (máx 1000).')
+    .setDescription('Elimina mensajes recientes de un usuario (máx 10000).')
     .addIntegerOption(option =>
       option
         .setName('cantidad')
-        .setDescription('Número de mensajes a eliminar (1-1000)')
+        .setDescription('Número de mensajes a eliminar (1-10000)')
         .setMinValue(1)
-        .setMaxValue(1000)
+        .setMaxValue(10000)
         .setRequired(true)
     )
     .addUserOption(option =>
@@ -1115,8 +1115,8 @@ function helpEmbeds(includeModeration) {
     ['`!!warn <@usuario> [razón]`', 'Advertencia; con 3 se silencia 1 hora automáticamente.'],
     ['`!!warns <@usuario>`', 'Muestra las advertencias de un usuario.'],
     ['`!!delwarn <@usuario>`', 'Borra las advertencias de un usuario.'],
-    ['`/purgeusuario <cantidad> <usuario>`', 'Elimina mensajes recientes de un usuario (máx 1000). Confirma solo para ti.'],
-    ['`/erasechat <cantidad>`', 'Elimina los últimos N mensajes del canal (máx 1000). Confirma solo para ti.'],
+    ['`/purgeusuario <cantidad> <usuario>`', 'Elimina mensajes recientes de un usuario (máx 10000). Confirma solo para ti.'],
+    ['`/erasechat <cantidad>`', 'Elimina los últimos N mensajes del canal (máx 10000). Confirma solo para ti.'],
     ['`/nuke`', 'Vacía el canal entero. Pide contraseña oculta (se pierde todo el historial).'],
     ['`!!slowmode <segundos>`', 'Modo lento del canal (0 lo desactiva).'],
     ['`!!lock` / `!!unlock`', 'Bloquea o desbloquea el canal.'],
@@ -2802,36 +2802,43 @@ async function handleMsgTimeout(message, rest) {
 async function purgeChannelMessages(channel, count) {
   let deleted = 0;
   let before;
+  const oldOnes = [];
+  const now = Date.now();
+  const BULK_MAX_AGE = 14 * 24 * 60 * 60 * 1000;
+
+  let nextFetch = channel.messages.fetch({ limit: 100, before }).catch(() => null);
 
   while (deleted < count) {
-    const batch = await channel.messages
-      .fetch({ limit: 100, before })
-      .catch(() => null);
+    const batch = await nextFetch;
 
     if (!batch || batch.size === 0) break;
 
     const msgs = [...batch.values()].slice(0, count - deleted);
 
-    const now = Date.now();
-    const BULK_MAX_AGE = 14 * 24 * 60 * 60 * 1000;
+    nextFetch = channel.messages.fetch({ limit: 100, before: batch.last().id }).catch(() => null);
+
     const bulkable = msgs.filter(msg => now - msg.createdTimestamp < BULK_MAX_AGE);
-    const oldOnes = msgs.filter(msg => now - msg.createdTimestamp >= BULK_MAX_AGE);
 
     if (bulkable.length >= 2) {
       const result = await channel.bulkDelete(bulkable, true).catch(() => null);
       if (result) deleted += result.size;
     } else if (bulkable.length === 1) {
-      await bulkable[0].delete().catch(() => {});
-      deleted += 1;
+      const ok = await bulkable[0].delete().then(() => true).catch(() => false);
+      if (ok) deleted += 1;
     }
 
-    for (const msg of oldOnes) {
-      await msg.delete().catch(() => {});
-      deleted += 1;
+    for (const msg of msgs) {
+      if (now - msg.createdTimestamp >= BULK_MAX_AGE) oldOnes.push(msg);
     }
 
     if (batch.size < 100) break;
     before = batch.last().id;
+  }
+
+  for (let i = 0; i < oldOnes.length; i += 5) {
+    const chunk = oldOnes.slice(i, i + 5);
+    const results = await Promise.allSettled(chunk.map(msg => msg.delete()));
+    deleted += results.filter(r => r.status === 'fulfilled').length;
   }
 
   return deleted;
@@ -2841,15 +2848,18 @@ async function purgeUserMessages(channel, targetId, count) {
   let deleted = 0;
   let remaining = count;
   let before;
+  const oldOnes = [];
+  const now = Date.now();
+  const BULK_MAX_AGE = 14 * 24 * 60 * 60 * 1000;
+
+  let nextFetch = channel.messages.fetch({ limit: 100, before }).catch(() => null);
 
   while (remaining > 0) {
-    const options = { limit: 100 };
-
-    if (before) options.before = before;
-
-    const batch = await channel.messages.fetch(options).catch(() => null);
+    const batch = await nextFetch;
 
     if (!batch || batch.size === 0) break;
+
+    nextFetch = channel.messages.fetch({ limit: 100, before: batch.last().id }).catch(() => null);
 
     const matches = [...batch.values()]
       .filter(msg => msg.author.id === targetId)
@@ -2857,30 +2867,37 @@ async function purgeUserMessages(channel, targetId, count) {
 
     if (matches.length === 0) {
       if (batch.size < 100) break;
-      before = batch.last().id;
       continue;
     }
 
-    for (let i = 0; i < matches.length;) {
-      const chunk = matches.slice(i, i + 100);
+    const bulkable = matches.filter(msg => now - msg.createdTimestamp < BULK_MAX_AGE);
+    const old = matches.filter(msg => now - msg.createdTimestamp >= BULK_MAX_AGE);
 
-      let removed = 0;
-
-      if (chunk.length >= 2) {
-        const result = await channel.bulkDelete(chunk).catch(() => null);
-        removed = result ? result.size : 0;
-      } else {
-        const ok = await chunk[0].delete().then(() => true).catch(() => false);
-        removed = ok ? 1 : 0;
+    if (bulkable.length >= 2) {
+      const result = await channel.bulkDelete(bulkable, true).catch(() => null);
+      if (result) {
+        deleted += result.size;
+        remaining -= result.size;
       }
-
-      deleted += removed;
-      remaining -= removed;
-      i += chunk.length;
+    } else if (bulkable.length === 1) {
+      const ok = await bulkable[0].delete().then(() => true).catch(() => false);
+      if (ok) {
+        deleted += 1;
+        remaining -= 1;
+      }
     }
 
+    oldOnes.push(...old);
+
     if (batch.size < 100) break;
-    before = batch.last().id;
+  }
+
+  for (let i = 0; i < oldOnes.length; i += 5) {
+    const chunk = oldOnes.slice(i, i + 5);
+    const results = await Promise.allSettled(chunk.map(msg => msg.delete()));
+    const removed = results.filter(r => r.status === 'fulfilled').length;
+    deleted += removed;
+    remaining -= removed;
   }
 
   return deleted;
