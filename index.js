@@ -1148,20 +1148,21 @@ function helpEmbeds(includeModeration) {
   ];
 
   const economy = [
-    ['`!!bal [@usuario]`', 'Tu saldo de monedas (billetera + banco).'],
+    ['`!!bal [@usuario]`', 'Tu saldo: billetera + banco (total).'],
     ['`!!banco [@usuario]`', 'Tu dinero guardado en el banco (a salvo de robos).'],
     ['`!!depositar <cantidad | todo>`', 'Guarda monedas en el banco.'],
     ['`!!retirar <cantidad | todo>`', 'Saca monedas del banco.'],
-    ['`!!transferir <@usuario> <cantidad>`', 'Envía monedas a otro usuario.'],
+    ['`!!transferir <@usuario> <cantidad>`', 'Envía monedas a otro usuario (desde la billetera).'],
     ['`!!daily`', 'Recompensa diaria.'],
     ['`!!trabajar`', 'Gana monedas trabajando (cada hora).'],
     ['`!!cazar`', 'Sal de cacería y gana monedas (cada 30 min).'],
-    ['`!!robar <@usuario>`', 'Intenta robar monedas a un usuario (cada hora).'],
-    ['`!!apostar <cantidad>`', 'Apostar monedas a cara o cruz.'],
+    ['`!!robar <@usuario>`', 'Intenta robar monedas de su billetera (el banco está a salvo; el cooldown solo se gasta si tiene éxito).'],
+    ['`!!apostar <cantidad>`', 'Apostar monedas a cara o cruz (60% de ganar).'],
     ['`!!duelo <@usuario> <cantidad>`', 'Duelo: el que gane se lleva la apuesta.'],
-    ['`!!shop`', 'Ver la tienda de roles de decoración.'],
-    ['`!!comprar <número>`', 'Comprar un tema de la tienda.'],
-    ['`!!comprarrol <nombre> [color]`', `Crear/renombrar tu rol personalizado (${CUSTOM_ROLE_PRICE} monedas).`]
+    ['`!!shop`', 'Tienda: 20 roles de decoración de 5,000 a 40,000 monedas.'],
+    ['`!!comprar <número>`', 'Compra un rol de la tienda (paga con billetera + banco).'],
+    ['`!!comprarrol <nombre> [color]`', `Crea tu rol personalizado, o renómbralo/cambiá su color sin cobrar (${CUSTOM_ROLE_PRICE} monedas al crearlo).`],
+    ['`!!comprarrol nuevo <nombre> [color]`', 'Crea OTRO rol personalizado aparte (te cobra el precio).']
   ];
 
   const fun = [
