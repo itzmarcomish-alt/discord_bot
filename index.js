@@ -82,8 +82,8 @@ const SHOP_THEMES = [
   { id: 'celestial',  name: 'Celestial',  color: 0xffffff, price: 40000, emoji: '✨' },
   { id: 'supremo',    name: 'Supremo',    color: 0xffff00, price: 38000, emoji: '🌟' },
   { id: 'inmortal',   name: 'Inmortal',   color: 0xf5f5dc, price: 36000, emoji: '♾️' },
-  { id: 'legendario', name: 'Legendario', color: 0xf1c40f, price: 33000, emoji: '🏆' },
-  { id: 'mitico',     name: 'Mítico',     color: 0xe67e22, price: 31000, emoji: '💎' },
+  { id: 'legendario', name: 'Legendario', color: 0xffd700, price: 33000, emoji: '🏆' },
+  { id: 'mitico',     name: 'Mítico',     color: 0x00bcd4, price: 31000, emoji: '💎' },
   { id: 'heroe',      name: 'Héroe',      color: 0xff5733, price: 29000, emoji: '🦸' },
   { id: 'dios',       name: 'Dios',       color: 0xffa500, price: 28000, emoji: '⚡' },
   { id: 'angel',      name: 'Ángel',      color: 0xe6e6fa, price: 26000, emoji: '😇' },
@@ -93,7 +93,7 @@ const SHOP_THEMES = [
   { id: 'dragon',     name: 'Dragón',     color: 0xe74c3c, price: 19000, emoji: '🐉' },
   { id: 'vikingo',    name: 'Vikingo',    color: 0x2ecc71, price: 17000, emoji: '🪓' },
   { id: 'samurai',    name: 'Samurái',    color: 0x95a5a6, price: 15000, emoji: '🗡️' },
-  { id: 'rey',        name: 'Rey',        color: 0xffd700, price: 13000, emoji: '🏰' },
+  { id: 'rey',        name: 'Rey',        color: 0xcd7f32, price: 13000, emoji: '🏰' },
   { id: 'espartano',  name: 'Espartano',  color: 0xe91e63, price: 11000, emoji: '🛡️' },
   { id: 'lobo',       name: 'Lobo',       color: 0x3498db, price: 9000,  emoji: '🐺' },
   { id: 'guerrero',   name: 'Guerrero',   color: 0x1abc9c, price: 7000,  emoji: '💪' },
@@ -1606,6 +1606,10 @@ async function handleTransferir(message, rest) {
 
   if (!member) return message.reply('❌ No encontré a ese usuario.');
 
+  if (member.user.bot) {
+    return message.reply('❌ No puedes transferirle monedas a un bot.');
+  }
+
   const data = getEco(message.guild.id, message.author.id);
   const wallet = data.coins || 0;
 
@@ -2245,6 +2249,10 @@ async function handleRobar(message, rest) {
     return message.reply('❌ No encontré a ese usuario.');
   }
 
+  if (member.user.bot) {
+    return message.reply('❌ No puedes robarle a un bot.');
+  }
+
   const targetData = getEco(message.guild.id, targetId);
   const targetCoins = targetData.coins || 0;
 
@@ -2308,6 +2316,10 @@ async function handleDuelo(message, rest) {
 
   if (!member) {
     return message.reply('❌ No encontré a ese usuario.');
+  }
+
+  if (member.user.bot) {
+    return message.reply('❌ No puedes dueler contra un bot.');
   }
 
   const myCoins = getEco(message.guild.id, message.author.id).coins || 0;
@@ -2535,7 +2547,7 @@ async function checkBirthdays() {
 
     if (!member) continue;
 
-    const announceKey = `announced:${key}:${today}`;
+    const announceKey = `announced:${key}:${now.getFullYear()}-${today}`;
 
     if (birthdaysBucket.map.get(announceKey)) continue;
 
@@ -2721,14 +2733,18 @@ async function purgeUserMessages(channel, targetId, count) {
     for (let i = 0; i < matches.length;) {
       const chunk = matches.slice(i, i + 100);
 
+      let removed = 0;
+
       if (chunk.length >= 2) {
-        await channel.bulkDelete(chunk).catch(console.error);
+        const result = await channel.bulkDelete(chunk).catch(() => null);
+        removed = result ? result.size : 0;
       } else {
-        await chunk[0].delete().catch(console.error);
+        const ok = await chunk[0].delete().then(() => true).catch(() => false);
+        removed = ok ? 1 : 0;
       }
 
-      deleted += chunk.length;
-      remaining -= chunk.length;
+      deleted += removed;
+      remaining -= removed;
       i += chunk.length;
     }
 
@@ -3390,7 +3406,7 @@ async function handlePolaroid(message, rest) {
     const target = await message.fetchReference().catch(() => null);
 
     if (target) {
-      const attachment = getImageFromMessage(target);
+      const attachment = await getImageFromMessage(target);
 
       if (attachment) {
         photo = await funImages.downloadBuffer(attachment.url);
@@ -4304,19 +4320,18 @@ client.on('guildMemberRemove', async member => {
 });
 
 client.on('voiceStateUpdate', (oldState, newState) => {
-  const id = newState.id;
-
   if (oldState.channelId && oldState.channelId !== newState.channelId) {
-    const session = voiceSessions.get(id);
+    const sessionKey = `${oldState.id}:${oldState.guild.id}`;
+    const session = voiceSessions.get(sessionKey);
 
     if (session) {
-      addVcTime(session.guildId, id, Math.max(0, (Date.now() - session.since) / 1000));
-      voiceSessions.delete(id);
+      addVcTime(session.guildId, oldState.id, Math.max(0, (Date.now() - session.since) / 1000));
+      voiceSessions.delete(sessionKey);
     }
   }
 
   if (newState.channelId && oldState.channelId !== newState.channelId) {
-    voiceSessions.set(id, { since: Date.now(), guildId: newState.guild.id });
+    voiceSessions.set(`${newState.id}:${newState.guild.id}`, { since: Date.now(), guildId: newState.guild.id });
   }
 });
 
