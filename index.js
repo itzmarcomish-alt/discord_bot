@@ -76,21 +76,21 @@ const SHOP_ITEMS = (process.env.SHOP_ITEMS || '')
   })
   .filter(Boolean);
 
-const CUSTOM_ROLE_PRICE = parseInt(process.env.CUSTOM_ROLE_PRICE, 10) || 2000;
+const CUSTOM_ROLE_PRICE = parseInt(process.env.CUSTOM_ROLE_PRICE, 10) || 30000;
 
 const SHOP_THEMES = [
-  { id: 'ghost',   name: 'Fantasma',    color: 0x95a5a6, price: 300,  emoji: '👻' },
-  { id: 'flower',  name: 'Florecita',   color: 0xfdcb6e, price: 350,  emoji: '🌸' },
-  { id: 'mint',    name: 'Menta',       color: 0x1abc9c, price: 400,  emoji: '🍃' },
-  { id: 'siren',   name: 'Sirena',      color: 0xff6b81, price: 450,  emoji: '🧜' },
-  { id: 'unicorn', name: 'Unicornio',   color: 0xe91e63, price: 500,  emoji: '🦄' },
-  { id: 'rainbow', name: 'Arcoíris',    color: 0xff9eaa, price: 600,  emoji: '🌈' },
-  { id: 'vampire', name: 'Vampiro',     color: 0x992d22, price: 700,  emoji: '🧛' },
-  { id: 'zombie',  name: 'Zombi',       color: 0x2ecc71, price: 700,  emoji: '🧟' },
-  { id: 'ocean',   name: 'Océano',      color: 0x3498db, price: 800,  emoji: '🌊' },
-  { id: 'royal',   name: 'Realeza',     color: 0xf1c40f, price: 1000, emoji: '👑' },
-  { id: 'dragon',  name: 'Dragón',      color: 0xe74c3c, price: 1500, emoji: '🐉' },
-  { id: 'gold',    name: 'Legendario',  color: 0xffd700, price: 2500, emoji: '✨' }
+  { id: 'emperador', name: 'Emperador',   color: 0xf1c40f, price: 29500, emoji: '👑' },
+  { id: 'titan',     name: 'Titán',       color: 0x9b59b6, price: 29000, emoji: '⚔️' },
+  { id: 'leon',      name: 'León',        color: 0xe67e22, price: 28500, emoji: '🦁' },
+  { id: 'dragon',    name: 'Dragón',      color: 0xe74c3c, price: 28000, emoji: '🐉' },
+  { id: 'vikingo',   name: 'Vikingo',     color: 0x2ecc71, price: 27500, emoji: '🪓' },
+  { id: 'samurai',   name: 'Samurái',     color: 0x95a5a6, price: 27000, emoji: '🗡️' },
+  { id: 'rey',       name: 'Rey',         color: 0xffd700, price: 26500, emoji: '🏰' },
+  { id: 'espartano', name: 'Espartano',   color: 0xe91e63, price: 26000, emoji: '🛡️' },
+  { id: 'lobo',      name: 'Lobo',        color: 0x3498db, price: 25500, emoji: '🐺' },
+  { id: 'guerrero',  name: 'Guerrero',    color: 0x1abc9c, price: 25000, emoji: '💪' },
+  { id: 'fenix',     name: 'Fénix',       color: 0x992d22, price: 24500, emoji: '🔥' },
+  { id: 'cazador',   name: 'Cazador',     color: 0x27ae60, price: 24000, emoji: '🏹' }
 ];
 
 const ROLE_COLOR_NAMES = {
@@ -1697,11 +1697,6 @@ async function handleComprar(message, rest) {
   }
 
   const item = items[index - 1];
-  const coins = getEco(message.guild.id, message.author.id).coins || 0;
-
-  if (coins < item.price) {
-    return message.reply(`❌ Te faltan **${item.price - coins}** monedas para **${item.name}**.`);
-  }
 
   let role;
 
@@ -1713,7 +1708,7 @@ async function handleComprar(message, rest) {
     if (!existing) {
       try {
         existing = await message.guild.roles.create({
-          name: item.name,
+          name: `${item.emoji} ${fancyRoleName(item.name)}`,
           color: item.color,
           permissions: [],
           reason: `Tienda: ${item.name}`
@@ -1739,7 +1734,13 @@ async function handleComprar(message, rest) {
   }
 
   if (message.member.roles.cache.has(role.id)) {
-    return message.reply(`❌ Ya tienes el rol **${role.name}**.`);
+    return message.reply(`✅ Ya tienes el rol **${role.name}**, no te cobré nada.`);
+  }
+
+  const coins = getEco(message.guild.id, message.author.id).coins || 0;
+
+  if (coins < item.price) {
+    return message.reply(`❌ Te faltan **${item.price - coins}** monedas para **${item.name}**.`);
   }
 
   const added = await message.member.roles.add(role)
@@ -1759,6 +1760,30 @@ async function handleComprar(message, rest) {
 
 function sanitizeRoleName(text) {
   return String(text || '').replace(/\s+/g, ' ').trim().slice(0, 32);
+}
+
+const FANCY_ROLE_MAP = (() => {
+  const map = {};
+  const UPPER = 0x1d4d0;
+  const LOWER = 0x1d4ea;
+
+  for (let i = 0; i < 26; i++) {
+    map[String.fromCharCode(65 + i)] = String.fromCodePoint(UPPER + i);
+    map[String.fromCharCode(97 + i)] = String.fromCodePoint(LOWER + i);
+  }
+
+  return map;
+})();
+
+function fancyRoleName(name) {
+  const normalized = String(name)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+
+  return normalized
+    .split('')
+    .map(ch => FANCY_ROLE_MAP[ch] || ch)
+    .join('');
 }
 
 const COLOR_MODIFIERS_DARK = new Set(['oscuro', 'marino', 'profundo', 'intenso', 'fuerte', 'bajo']);
@@ -1963,6 +1988,7 @@ async function handleComprarRol(message, rest) {
   }
 
   const name = sanitizeRoleName(rawName);
+  const fancyName = fancyRoleName(name);
 
   const key = `${message.guild.id}:${message.author.id}`;
   const existingRoleId = customRolesBucket.map.get(key);
@@ -1980,7 +2006,7 @@ async function handleComprarRol(message, rest) {
 
   try {
     if (existingRole) {
-      await existingRole.setName(name);
+      await existingRole.setName(fancyName);
 
       if (color !== null) {
         await existingRole.setColor(color);
@@ -1989,7 +2015,7 @@ async function handleComprarRol(message, rest) {
       role = existingRole;
     } else {
       role = await message.guild.roles.create({
-        name,
+        name: fancyName,
         color: color !== null ? color : randomRoleColor(),
         permissions: [],
         reason: `Rol personalizado de ${message.author.tag}`
