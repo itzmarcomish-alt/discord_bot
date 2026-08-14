@@ -1134,7 +1134,7 @@ function helpEmbeds(includeModeration) {
     ['`!!serverinfo`', 'Información del servidor.'],
     ['`!!ping`', 'Latencia del bot.'],
     ['`!!poll <pregunta>`', 'Crea una encuesta con ✅ y ❌.'],
-    ['`!!encuesta <pregunta> - <opción> - <opción> - ...`', 'Crea una encuesta con tus propias opciones (1 a 8) separadas por guiones. Incluye respuesta libre: al reaccionar con ✏️ puedes escribir tu propia respuesta y aparece debajo en vivo.'],
+    ['`!!encuesta <pregunta>` o `!!encuesta <pregunta> - <opción> - ...`', 'Encuesta con tus propias opciones (1 a 8) separadas por guiones. Con solo la pregunta queda en blanco y los demás escriben su propia opción. Reaccionando con ✏️ cualquiera puede dejar su respuesta en vivo debajo de la encuesta.'],
     ['`!!say <texto>`', 'El bot repite tu mensaje.'],
     ['`!!announce <texto>`', 'Envía un anuncio a @everyone con letras grandes (encabezado).'],
     ['`!!nivel [@usuario]`', 'Nivel, XP y progreso.'],
@@ -3428,20 +3428,17 @@ const POLL_FREE_EMOJI = '✏️';
 async function handleEncuesta(message, rest) {
   const parts = rest.split(/\s*-\s*/).map(part => part.trim());
 
-  if (parts.length < 2) {
+  if (parts.length < 1 || !parts[0]) {
     return message.reply(
-      '❌ Uso: `!!encuesta <pregunta> - <opción 1> - <opción 2> ...`\n' +
-      'Ejemplo: `!!encuesta ¿Qué comemos? - Pizza - Sushi - Tacos`\n' +
-      'Máximo 8 opciones (el bot agrega automáticamente la opción de respuesta libre).'
+      '❌ Uso: `!!encuesta <pregunta>` o `!!encuesta <pregunta> - <opción 1> - <opción 2> ...`\n' +
+      'Con solo la pregunta la encuesta queda en blanco: los demás escriben su propia opción.\n' +
+      'Ejemplo: `!!encuesta ¿Qué hacemos hoy? - Jugar - Ver pelis - Descansar`\n' +
+      'Máximo 8 opciones.'
     );
   }
 
   const question = parts[0];
   const customOptions = parts.slice(1);
-
-  if (!question) {
-    return message.reply('❌ Escribe una pregunta para la encuesta.');
-  }
 
   if (customOptions.length > POLL_NUMBER_EMOJIS.length) {
     return message.reply('❌ Máximo 8 opciones (más la respuesta libre automática).');
