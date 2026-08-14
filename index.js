@@ -3535,7 +3535,17 @@ async function handleSay(message, rest) {
 
   if (!text) return message.reply('❌ Uso: `!!say <texto>`');
 
-  await message.channel.send(text);
+  if (message.reference?.messageId) {
+    try {
+      const target = await message.channel.messages.fetch(message.reference.messageId);
+      await target.reply(text);
+    } catch (error) {
+      console.error('Error respondiendo con !!say:', error);
+      await message.channel.send(text);
+    }
+  } else {
+    await message.channel.send(text);
+  }
 
   await message.delete().catch(() => {});
 }
