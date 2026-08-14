@@ -2178,11 +2178,11 @@ async function handleRobar(message, rest) {
     return message.reply(`⏳ Espera **${wait} min** para robar de nuevo.`);
   }
 
-  data.lastRob = Date.now();
-  economyBucket.map.set(ecoKey(message.guild.id, message.author.id), data);
-  economyBucket.debounce();
-
   if (Math.random() < 0.5) {
+    data.lastRob = Date.now();
+    economyBucket.map.set(ecoKey(message.guild.id, message.author.id), data);
+    economyBucket.debounce();
+
     const steal = Math.min(
       targetCoins,
       Math.max(10, Math.floor(targetCoins * (0.1 + Math.random() * 0.15)))
