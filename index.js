@@ -2094,7 +2094,7 @@ async function handleApostar(message, rest) {
     return message.reply(`❌ No tienes suficientes monedas (tienes **${coins}**).`);
   }
 
-  const win = Math.random() < 0.5;
+  const win = Math.random() < 0.6;
 
   addCoins(message.guild.id, message.author.id, win ? amount : -amount);
 
@@ -2155,6 +2155,21 @@ async function handleRobar(message, rest) {
     return message.reply('❌ No encontré a ese usuario.');
   }
 
+  const targetData = getEco(message.guild.id, targetId);
+  const targetCoins = targetData.coins || 0;
+
+  if (targetCoins <= 0) {
+    const bank = targetData.bank || 0;
+
+    if (bank > 0) {
+      return message.reply(
+        `🕵️ **${member.user.tag}** no tiene nada que robar en su billetera: tiene **${bank}** monedas en el banco y ahí no puedes robarlas.`
+      );
+    }
+
+    return message.reply(`🕵️ **${member.user.tag}** no tiene nada que robar.`);
+  }
+
   const data = getEco(message.guild.id, message.author.id);
 
   if (data.lastRob && hoursSince(data.lastRob) < 1) {
@@ -2167,21 +2182,11 @@ async function handleRobar(message, rest) {
   economyBucket.map.set(ecoKey(message.guild.id, message.author.id), data);
   economyBucket.debounce();
 
-  const targetData = getEco(message.guild.id, targetId);
-  const targetCoins = targetData.coins || 0;
-
-  if (targetCoins < 50) {
-    const bank = targetData.bank || 0;
-
-    if (bank >= 50) {
-      return message.reply(`🕵️ Ese usuario tiene **${bank}** monedas guardadas en el banco... ahí no puedes robarlas.`);
-    }
-
-    return message.reply('🕵️ Ese usuario no tiene nada que robar (menos de 50 monedas).');
-  }
-
   if (Math.random() < 0.5) {
-    const steal = Math.max(10, Math.floor(targetCoins * (0.1 + Math.random() * 0.15)));
+    const steal = Math.min(
+      targetCoins,
+      Math.max(10, Math.floor(targetCoins * (0.1 + Math.random() * 0.15)))
+    );
 
     addCoins(message.guild.id, targetId, -steal);
     addCoins(message.guild.id, message.author.id, steal);
@@ -3635,9 +3640,9 @@ client.on('messageCreate', async message => {
       return;
     }
 
-    if (commandName === 'setcoins') {
+    if (commandName === 'setcoins' || commandName === 'setnivel') {
       if (!isBankAdmin(message.member)) {
-        return message.reply('❌ Solo el rol de administrador del banco puede modificar monedas.');
+        return message.reply('❌ Solo el rol de administrador del banco puede modificar monedas o niveles.');
       }
     } else if (!PUBLIC_COMMANDS.has(commandName) && !isAdmin(message.member)) {
       return message.reply(
