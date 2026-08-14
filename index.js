@@ -251,6 +251,7 @@ const reactionRolesBucket = createBucket('reactionroles');
 const customRolesBucket = createBucket('customroles');
 const shopRolesBucket = createBucket('shoproles');
 const warningsBucket = createBucket('warnings');
+const pollBucket = createBucket('polls');
 
 const voiceSessions = new Map();
 
@@ -1133,7 +1134,7 @@ function helpEmbeds(includeModeration) {
     ['`!!serverinfo`', 'Información del servidor.'],
     ['`!!ping`', 'Latencia del bot.'],
     ['`!!poll <pregunta>`', 'Crea una encuesta con ✅ y ❌.'],
-    ['`!!encuesta <pregunta> | <opción> | <opción> | ...`', 'Crea una encuesta con tus propias opciones (2 a 9); se vota con las reacciones 1️⃣ 2️⃣ 3️⃣...'],
+    ['`!!encuesta <pregunta> - <opción> - <opción> - ...`', 'Crea una encuesta con tus propias opciones (1 a 8) separadas por guiones. Incluye respuesta libre: al reaccionar con ✏️ puedes escribir tu propia respuesta y aparece debajo en vivo.'],
     ['`!!say <texto>`', 'El bot repite tu mensaje.'],
     ['`!!announce <texto>`', 'Envía un anuncio a @everyone con letras grandes (encabezado).'],
     ['`!!nivel [@usuario]`', 'Nivel, XP y progreso.'],
@@ -3421,48 +3422,112 @@ async function handlePoll(message, rest) {
   await message.delete().catch(() => {});
 }
 
-const POLL_NUMBER_EMOJIS = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣'];
+const POLL_NUMBER_EMOJIS = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣'];
+const POLL_FREE_EMOJI = '✏️';
 
 async function handleEncuesta(message, rest) {
-  const parts = rest.split('|').map(part => part.trim());
+  const parts = rest.split(/\s*-\s*/).map(part => part.trim());
 
-  if (parts.length < 3) {
+  if (parts.length < 2) {
     return message.reply(
-      '❌ Uso: `!!encuesta <pregunta> | <opción 1> | <opción 2> | ...`\n' +
-      'Ejemplo: `!!encuesta ¿Qué comemos? | Pizza | Sushi | Tacos`\n' +
-      'Mínimo 2 opciones y máximo 9.'
+      '❌ Uso: `!!encuesta <pregunta> - <opción 1> - <opción 2> ...`\n' +
+      'Ejemplo: `!!encuesta ¿Qué comemos? - Pizza - Sushi - Tacos`\n' +
+      'Máximo 8 opciones (el bot agrega automáticamente la opción de respuesta libre).'
     );
   }
 
   const question = parts[0];
-  const options = parts.slice(1);
+  const customOptions = parts.slice(1);
 
   if (!question) {
     return message.reply('❌ Escribe una pregunta para la encuesta.');
   }
 
-  if (options.length > POLL_NUMBER_EMOJIS.length) {
-    return message.reply('❌ Máximo 9 opciones por encuesta.');
+  if (customOptions.length > POLL_NUMBER_EMOJIS.length) {
+    return message.reply('❌ Máximo 8 opciones (más la respuesta libre automática).');
   }
 
-  const optionText = options
-    .map((option, i) => `${POLL_NUMBER_EMOJIS[i]} **${option}**`)
+  const options = customOptions.map((text, i) => ({
+    emoji: POLL_NUMBER_EMOJIS[i],
+    text
+  }));
+
+  const optionLines = options
+    .map(o => `${o.emoji} **${o.text}**`)
+    .concat(`${POLL_FREE_EMOJI} **Respuesta libre**`)
     .join('\n');
 
   const embed = new EmbedBuilder()
     .setTitle('📊 Encuesta')
-    .setDescription(`**${question}**\n\n${optionText}`)
+    .setDescription(`**${question}**\n\n${optionLines}`)
     .setColor(0x3498db)
     .setFooter({ text: `Por ${message.author.tag} · Vota con las reacciones` })
     .setTimestamp();
 
   const sent = await message.channel.send({ embeds: [embed] });
 
-  for (let i = 0; i < options.length; i++) {
-    await sent.react(POLL_NUMBER_EMOJIS[i]).catch(() => {});
+  pollBucket.map.set(sent.id, {
+    channelId: message.channel.id,
+    question: `**${question}**`,
+    optionLines,
+    pending: [],
+    responses: []
+  });
+  pollBucket.debounce();
+
+  for (const option of options) {
+    await sent.react(option.emoji).catch(() => {});
   }
+  await sent.react(POLL_FREE_EMOJI).catch(() => {});
 
   await message.delete().catch(() => {});
+}
+
+async function updatePollEmbed(channel, messageId, poll) {
+  try {
+    const pollMessage = await channel.messages.fetch(messageId).catch(() => null);
+
+    if (!pollMessage || !pollMessage.embeds[0]) return;
+
+    const embed = EmbedBuilder.from(pollMessage.embeds[0]);
+
+    const responseLines = (poll.responses || [])
+      .map(r => `> <@${r.user}>: ${r.text}`)
+      .join('\n');
+
+    embed.setDescription(
+      `${poll.question}\n\n${poll.optionLines}` +
+      (responseLines ? `\n\n📝 **Respuestas libres:**\n${responseLines}` : '')
+    );
+
+    await pollMessage.edit({ embeds: [embed] });
+  } catch (error) {
+    console.error('Error actualizando encuesta:', error);
+  }
+}
+
+async function capturePollFreeResponse(message) {
+  if (message.content.trim().startsWith('!!')) return;
+
+  for (const [messageId, poll] of pollBucket.map) {
+    if (poll.channelId !== message.channel.id) continue;
+
+    if (poll.pending.includes(message.author.id)) {
+      const text = message.content.trim().slice(0, 200);
+
+      if (!text) return;
+
+      poll.pending = poll.pending.filter(id => id !== message.author.id);
+      poll.responses.push({ user: message.author.id, text, at: Date.now() });
+      pollBucket.debounce();
+
+      await updatePollEmbed(message.channel, messageId, poll);
+      await message.channel
+        .send(`✏️ **<@${message.author.id}>** respondió: ${text}`)
+        .catch(() => {});
+      return;
+    }
+  }
 }
 
 async function handleSay(message, rest) {
@@ -3980,8 +4045,9 @@ client.on('messageCreate', async message => {
 
     if (await enforceAdminOnlyChannels(message)) return;
 
-    await grantXp(message);
+    await capturePollFreeResponse(message);
 
+    await grantXp(message);
     const antiScam = await runAntiScam(message);
 
     if (antiScam?.deleted) return;
@@ -4592,6 +4658,16 @@ client.on('messageReactionAdd', async (reaction, user) => {
   if (member) {
     await handleReactionChange(reaction, member, true);
   }
+
+  const poll = pollBucket.map.get(reaction.message.id);
+
+  if (poll && reaction.emoji.name === POLL_FREE_EMOJI && !poll.pending.includes(user.id)) {
+    poll.pending.push(user.id);
+    pollBucket.debounce();
+    await reaction.message.channel
+      .send(`✏️ **<@${user.id}>**, escribe tu respuesta libre en este canal.`)
+      .catch(() => {});
+  }
 });
 
 client.on('messageReactionRemove', async (reaction, user) => {
@@ -4610,6 +4686,13 @@ client.on('messageReactionRemove', async (reaction, user) => {
 
   if (member) {
     await handleReactionChange(reaction, member, false);
+  }
+
+  const poll = pollBucket.map.get(reaction.message.id);
+
+  if (poll && reaction.emoji.name === POLL_FREE_EMOJI) {
+    poll.pending = poll.pending.filter(id => id !== user.id);
+    pollBucket.debounce();
   }
 });
 
@@ -4645,7 +4728,8 @@ async function registerCommands() {
       reactionRolesBucket.init(),
       customRolesBucket.init(),
       shopRolesBucket.init(),
-      warningsBucket.init()
+      warningsBucket.init(),
+      pollBucket.init()
     ]);
 
     await registerCommands();
@@ -4666,7 +4750,8 @@ async function saveAllBuckets() {
     reactionRolesBucket.save(),
     customRolesBucket.save(),
     shopRolesBucket.save(),
-    warningsBucket.save()
+    warningsBucket.save(),
+    pollBucket.save()
   ]);
 }
 
