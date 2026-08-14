@@ -3104,34 +3104,53 @@ async function handleLockState(message, locked) {
   const guild = message.guild;
   const apply = [];
 
+  const denyThreadBits = {
+    CreatePublicThreads: false,
+    CreatePrivateThreads: false,
+    SendMessagesInThreads: false
+  };
+
+  const allowThreadBits = {
+    CreatePublicThreads: true,
+    CreatePrivateThreads: true,
+    SendMessagesInThreads: true
+  };
+
+  const resetBits = {
+    SendMessages: null,
+    CreatePublicThreads: null,
+    CreatePrivateThreads: null,
+    SendMessagesInThreads: null
+  };
+
   if (locked) {
-    apply.push({ target: guild.roles.everyone, options: { SendMessages: false } });
+    apply.push({ target: guild.roles.everyone, options: { SendMessages: false, ...denyThreadBits } });
 
     for (const roleId of MEMBER_DENIED_ROLES) {
       const role = guild.roles.cache.get(roleId);
 
-      if (role) apply.push({ target: role, options: { SendMessages: false } });
+      if (role) apply.push({ target: role, options: { SendMessages: false, ...denyThreadBits } });
     }
 
     for (const roleId of adminRoleIdsIn(guild)) {
       const role = guild.roles.cache.get(roleId);
 
-      if (role) apply.push({ target: role, options: { SendMessages: true } });
+      if (role) apply.push({ target: role, options: { SendMessages: true, ...allowThreadBits } });
     }
   } else {
-    apply.push({ target: guild.roles.everyone, options: { SendMessages: null } });
-
     for (const roleId of MEMBER_DENIED_ROLES) {
       const role = guild.roles.cache.get(roleId);
 
-      if (role) apply.push({ target: role, options: { SendMessages: null } });
+      if (role) apply.push({ target: role, options: { ...resetBits } });
     }
 
     for (const roleId of adminRoleIdsIn(guild)) {
       const role = guild.roles.cache.get(roleId);
 
-      if (role) apply.push({ target: role, options: { SendMessages: null } });
+      if (role) apply.push({ target: role, options: { ...resetBits } });
     }
+
+    apply.push({ target: guild.roles.everyone, options: { ...resetBits } });
   }
 
   try {
