@@ -1382,6 +1382,31 @@ function addCoins(guildId, userId, amount) {
   return data.coins;
 }
 
+function totalCoins(guildId, userId) {
+  const data = getEco(guildId, userId);
+
+  return (data.coins || 0) + (data.bank || 0);
+}
+
+function spendCoins(guildId, userId, amount) {
+  const data = getEco(guildId, userId);
+
+  let remaining = amount;
+  const fromWallet = Math.min(data.coins || 0, remaining);
+
+  data.coins = (data.coins || 0) - fromWallet;
+  remaining -= fromWallet;
+
+  if (remaining > 0) {
+    data.bank = Math.max(0, (data.bank || 0) - remaining);
+  }
+
+  economyBucket.map.set(ecoKey(guildId, userId), data);
+  economyBucket.debounce();
+
+  return data;
+}
+
 function hoursSince(ts) {
   return (Date.now() - (ts || 0)) / 3600000;
 }
@@ -1508,7 +1533,8 @@ async function handleBal(message, rest) {
   await message.reply(
     `💰 **${user.tag}**\n` +
     `Billetera: **${data.coins || 0}** monedas\n` +
-    `🏦 Banco: **${data.bank || 0}** monedas (a salvo de robos)`
+    `🏦 Banco: **${data.bank || 0}** monedas (a salvo de robos)\n` +
+    `Total: **${totalCoins(message.guild.id, user.id)}** monedas (billetera + banco)`
   );
 }
 
@@ -1773,10 +1799,12 @@ async function handleComprar(message, rest) {
     return message.reply(`✅ Ya tienes el rol **${role.name}**, no te cobré nada.`);
   }
 
-  const coins = getEco(message.guild.id, message.author.id).coins || 0;
+  const total = totalCoins(message.guild.id, message.author.id);
 
-  if (coins < item.price) {
-    return message.reply(`❌ Te faltan **${item.price - coins}** monedas para **${item.name}**.`);
+  if (total < item.price) {
+    return message.reply(
+      `❌ Te faltan **${item.price - total}** monedas para **${item.name}** (billetera + banco).`
+    );
   }
 
   const added = await message.member.roles.add(role)
@@ -1787,11 +1815,13 @@ async function handleComprar(message, rest) {
     return message.reply('❌ No pude asignar el rol (¿me faltan permisos?). No se te cobró nada.');
   }
 
-  addCoins(message.guild.id, message.author.id, -item.price);
+  spendCoins(message.guild.id, message.author.id, item.price);
 
   const emoji = item.kind === 'theme' ? item.emoji : '🛒';
 
-  await message.reply(`${emoji} ¡Compraste **${role.name}** por **${item.price}** monedas! Te quedan **${getEco(message.guild.id, message.author.id).coins}**.`);
+  await message.reply(
+    `${emoji} ¡Compraste **${role.name}** por **${item.price}** monedas! Te quedan **${totalCoins(message.guild.id, message.author.id)}** (billetera + banco).`
+  );
 }
 
 function sanitizeRoleName(text) {
@@ -2058,10 +2088,12 @@ async function handleComprarRol(message, rest) {
   const existingRole = existingRoleId ? message.guild.roles.cache.get(existingRoleId) : null;
 
   if (!existingRole) {
-    const coins = getEco(message.guild.id, message.author.id).coins || 0;
+    const total = totalCoins(message.guild.id, message.author.id);
 
-    if (coins < CUSTOM_ROLE_PRICE) {
-      return message.reply(`❌ Te faltan **${CUSTOM_ROLE_PRICE - coins}** monedas para tu rol personalizado.`);
+    if (total < CUSTOM_ROLE_PRICE) {
+      return message.reply(
+        `❌ Te faltan **${CUSTOM_ROLE_PRICE - total}** monedas para tu rol personalizado (billetera + banco).`
+      );
     }
   }
 
@@ -2101,7 +2133,7 @@ async function handleComprarRol(message, rest) {
   customRolesBucket.debounce();
 
   if (!existingRole) {
-    addCoins(message.guild.id, message.author.id, -CUSTOM_ROLE_PRICE);
+    spendCoins(message.guild.id, message.author.id, CUSTOM_ROLE_PRICE);
   }
 
   const colorHex = '#' + (role.color || 0).toString(16).padStart(6, '0');
@@ -2111,7 +2143,7 @@ async function handleComprarRol(message, rest) {
     (forceNew
       ? 'Puedes crear otro distinto con `!!comprarrol nuevo`. '
       : 'Cambia nombre o color con `!!comprarrol`. ') +
-    `Te quedan **${getEco(message.guild.id, message.author.id).coins}** monedas.`
+    `Te quedan **${totalCoins(message.guild.id, message.author.id)}** monedas (billetera + banco).`
   );
 }
 
