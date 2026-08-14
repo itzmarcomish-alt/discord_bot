@@ -633,39 +633,6 @@ async function createAchievementImage(text) {
   return sharp(Buffer.from(svg)).png().toBuffer();
 }
 
-async function createAnnouncementImage(text, author) {
-  const W = 1000;
-  const safe = sanitize(text, 500);
-
-  let fontSize = 92;
-  let maxChars = 20;
-  let lines = wrapText(safe, maxChars).slice(0, 8);
-
-  while (lines.length > 6 && fontSize > 46) {
-    fontSize -= 8;
-    maxChars = Math.max(14, Math.round(W / (fontSize * 0.55)));
-    lines = wrapText(safe, maxChars).slice(0, 8);
-  }
-
-  const lineHeight = Math.round(fontSize * 1.25);
-  const titleY = 170;
-  const startY = 280;
-  const bodyH = lines.length * lineHeight;
-  const footerY = startY + bodyH + 70;
-  const H = footerY + 80;
-
-  const svg = svgDoc(W, H,
-    '<rect width="' + W + '" height="' + H + '" fill="#2c1144"/>' +
-    '<rect x="20" y="20" width="' + (W - 40) + '" height="' + (H - 40) + '" fill="none" stroke="#9b59b6" stroke-width="4" rx="24"/>' +
-    '<text x="' + (W / 2) + '" y="' + titleY + '" text-anchor="middle" font-family="Luckiest Guy" font-size="110" fill="#ffce54">ANUNCIO</text>' +
-    '<line x1="180" y1="205" x2="' + (W - 180) + '" y2="205" stroke="#9b59b6" stroke-width="3"/>' +
-    textBlock(lines, 60, startY, fontSize, lineHeight, '#ffffff', 'Luckiest Guy', 'normal', 'normal') +
-    '<text x="' + (W / 2) + '" y="' + footerY + '" text-anchor="middle" font-family="Luckiest Guy" font-size="32" fill="#c39bd3">— ' + escapeXml(author) + ' —</text>'
-  , true);
-
-  return sharp(Buffer.from(svg)).png().toBuffer();
-}
-
 module.exports = {
   downloadBuffer,
   createQuoteImage,
@@ -673,7 +640,6 @@ module.exports = {
   createPolaroidImage,
   createWantedImage,
   createAchievementImage,
-  createAnnouncementImage,
   createWelcomeImage,
   createGoodbyeImage,
   createStatsImage,

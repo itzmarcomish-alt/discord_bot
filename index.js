@@ -1126,7 +1126,7 @@ function helpEmbeds(includeModeration) {
     ['`!!ping`', 'Latencia del bot.'],
     ['`!!poll <pregunta>`', 'Crea una encuesta con ✅ y ❌.'],
     ['`!!say <texto>`', 'El bot repite tu mensaje.'],
-    ['`!!announce <texto>`', 'Envía un anuncio a @everyone con el texto en letras gigantes.'],
+    ['`!!announce <texto>`', 'Envía un anuncio a @everyone con letras grandes (encabezado).'],
     ['`!!nivel [@usuario]`', 'Nivel, XP y progreso.'],
     ['`!!niveles`', 'Top 10 de niveles del servidor.'],
     ['`!!stats [@usuario]`', 'Estadísticas completas con gráfica de actividad.'],
@@ -2988,33 +2988,21 @@ async function handleAnnounce(message, rest) {
     return message.reply('❌ Uso: `!!announce <texto>`');
   }
 
-  const image = await funImages
-    .createAnnouncementImage(text, message.author.tag)
-    .catch(() => null);
-
-  const embed = new EmbedBuilder()
-    .setColor(0x9b59b6)
-    .setFooter({ text: `Por ${message.author.tag}` })
-    .setTimestamp();
-
-  if (image) {
-    embed.setImage('attachment://anuncio.png');
-  } else {
-    embed.setTitle('📢 Anuncio').setDescription(text);
-  }
-
-  const files = image ? [{ attachment: image, name: 'anuncio.png' }] : [];
+  const bigText = text
+    .split('\n')
+    .map(line => line.trim() ? `# ${line}` : line)
+    .join('\n');
 
   try {
     await message.channel.send({
-      content: '@everyone',
-      embeds: [embed],
-      files
+      content: `@everyone\n${bigText}\n\n— *${message.author.tag}*`
     });
   } catch (error) {
     console.error('No pude mencionar a @everyone (¿permiso de mencionar todos?):', error.message);
 
-    await message.channel.send({ embeds: [embed], files });
+    await message.channel.send({
+      content: `${bigText}\n\n— *${message.author.tag}*`
+    });
   }
 
   await logModAction(
