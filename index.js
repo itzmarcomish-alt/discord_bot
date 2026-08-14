@@ -285,7 +285,7 @@ function memberChannelOverwriteData() {
 const PUBLIC_COMMANDS = new Set([
   'help', '8ball', 'dado', 'moneda', 'slap', 'quote', 'firma', 'polaroid', 'wanted', 'logro',
   'avatar', 'userinfo', 'serverinfo', 'ping',
-  'poll', 'say', 'nivel', 'niveles',
+  'poll', 'encuesta', 'say', 'nivel', 'niveles',
   'afk', 'bal', 'daily', 'trabajar', 'shop', 'comprar', 'comprarrol', 'vender', 'apostar',
   'robar', 'cazar', 'duelo', 'racha', 'cumple', 'stats',
   'banco', 'depositar', 'retirar', 'transferir'
@@ -1133,6 +1133,7 @@ function helpEmbeds(includeModeration) {
     ['`!!serverinfo`', 'Información del servidor.'],
     ['`!!ping`', 'Latencia del bot.'],
     ['`!!poll <pregunta>`', 'Crea una encuesta con ✅ y ❌.'],
+    ['`!!encuesta <pregunta> | <opción> | <opción> | ...`', 'Crea una encuesta con tus propias opciones (2 a 9); se vota con las reacciones 1️⃣ 2️⃣ 3️⃣...'],
     ['`!!say <texto>`', 'El bot repite tu mensaje.'],
     ['`!!announce <texto>`', 'Envía un anuncio a @everyone con letras grandes (encabezado).'],
     ['`!!nivel [@usuario]`', 'Nivel, XP y progreso.'],
@@ -3420,6 +3421,50 @@ async function handlePoll(message, rest) {
   await message.delete().catch(() => {});
 }
 
+const POLL_NUMBER_EMOJIS = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣'];
+
+async function handleEncuesta(message, rest) {
+  const parts = rest.split('|').map(part => part.trim());
+
+  if (parts.length < 3) {
+    return message.reply(
+      '❌ Uso: `!!encuesta <pregunta> | <opción 1> | <opción 2> | ...`\n' +
+      'Ejemplo: `!!encuesta ¿Qué comemos? | Pizza | Sushi | Tacos`\n' +
+      'Mínimo 2 opciones y máximo 9.'
+    );
+  }
+
+  const question = parts[0];
+  const options = parts.slice(1);
+
+  if (!question) {
+    return message.reply('❌ Escribe una pregunta para la encuesta.');
+  }
+
+  if (options.length > POLL_NUMBER_EMOJIS.length) {
+    return message.reply('❌ Máximo 9 opciones por encuesta.');
+  }
+
+  const optionText = options
+    .map((option, i) => `${POLL_NUMBER_EMOJIS[i]} **${option}**`)
+    .join('\n');
+
+  const embed = new EmbedBuilder()
+    .setTitle('📊 Encuesta')
+    .setDescription(`**${question}**\n\n${optionText}`)
+    .setColor(0x3498db)
+    .setFooter({ text: `Por ${message.author.tag} · Vota con las reacciones` })
+    .setTimestamp();
+
+  const sent = await message.channel.send({ embeds: [embed] });
+
+  for (let i = 0; i < options.length; i++) {
+    await sent.react(POLL_NUMBER_EMOJIS[i]).catch(() => {});
+  }
+
+  await message.delete().catch(() => {});
+}
+
 async function handleSay(message, rest) {
   const text = rest.trim();
 
@@ -3953,7 +3998,7 @@ client.on('messageCreate', async message => {
 
     if (!content.startsWith('!!')) return;
 
-    const commandMatch = /^!!(emoji|sticker|ban|kick|timeout|unban|warn|warns|delwarn|slowmode|lock|unlock|announce|avatar|userinfo|serverinfo|ping|poll|say|8ball|dado|moneda|slap|quote|firma|polaroid|wanted|logro|mute|unmute|vc|antiraid|despedida|nivel|niveles|help|canales|afk|bal|daily|trabajar|shop|comprar|comprarrol|vender|apostar|robar|cazar|duelo|racha|cumple|stats|reactionroles|setnivel|setcoins|banco|depositar|retirar|transferir|pene)\b/i.exec(content);
+    const commandMatch = /^!!(emoji|sticker|ban|kick|timeout|unban|warn|warns|delwarn|slowmode|lock|unlock|announce|avatar|userinfo|serverinfo|ping|poll|encuesta|say|8ball|dado|moneda|slap|quote|firma|polaroid|wanted|logro|mute|unmute|vc|antiraid|despedida|nivel|niveles|help|canales|afk|bal|daily|trabajar|shop|comprar|comprarrol|vender|apostar|robar|cazar|duelo|racha|cumple|stats|reactionroles|setnivel|setcoins|banco|depositar|retirar|transferir|pene)\b/i.exec(content);
 
     if (!commandMatch) return;
 
@@ -4055,6 +4100,11 @@ client.on('messageCreate', async message => {
 
     if (commandName === 'poll') {
       await handlePoll(message, rest);
+      return;
+    }
+
+    if (commandName === 'encuesta') {
+      await handleEncuesta(message, rest);
       return;
     }
 
