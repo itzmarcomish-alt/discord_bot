@@ -2203,6 +2203,19 @@ async function handleVender(message, rest) {
     kind = `el rol de tienda **${item.name}**`;
   }
 
+  const levelRoleIds = new Set(LEVEL_ROLES.values());
+
+  if (
+    role.id === guild.roles.everyone.id ||
+    role.id === guild.members.me.roles.highest.id ||
+    levelRoleIds.has(role.id) ||
+    MEMBER_DENIED_ROLES.has(role.id) ||
+    ADMIN_ROLE_IDS.has(role.id) ||
+    role.name === ADMIN_ROLE_NAME
+  ) {
+    return message.reply('❌ Ese rol está protegido (admin, miembro, bot o nivel) y no se puede vender.');
+  }
+
   if (!member.roles.cache.has(role.id)) {
     return message.reply(`❌ No tienes ${kind} asignado.`);
   }
