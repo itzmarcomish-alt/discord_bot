@@ -305,6 +305,11 @@ const ADMIN_ONLY_CHANNELS = new Set([
   '1537276322471088238'
 ]);
 
+const SECURITY_EXEMPT_CHANNELS = new Set([
+  ...(process.env.SECURITY_EXEMPT_CHANNELS || '').split(',').map(id => id.trim()).filter(Boolean),
+  '1323107657321807903'
+]);
+
 const RAID_JOIN_THRESHOLD = parseInt(process.env.RAID_JOIN_THRESHOLD, 10) || 5;
 const RAID_JOIN_WINDOW_MS = 10 * 1000;
 const RAID_COOLDOWN_MS = 60 * 60 * 1000;
@@ -1011,6 +1016,7 @@ async function ensureMsgTarget(message, targetId, action, member) {
 }
 
 async function enforceAdminOnlyChannels(message) {
+  if (SECURITY_EXEMPT_CHANNELS.has(message.channelId)) return false;
   if (!ADMIN_ONLY_CHANNELS.has(message.channelId)) return false;
   if (message.author.bot) return false;
   if (isAdmin(message.member)) return false;
@@ -1043,6 +1049,8 @@ async function applyChannelRestrictions(guild) {
   const adminRoleIds = adminRoleIdsIn(guild);
 
   for (const channelId of channelIds) {
+    if (SECURITY_EXEMPT_CHANNELS.has(channelId)) continue;
+
     const channel = guild.channels.cache.get(channelId);
 
     if (!channel || !channel.isTextBased()) continue;
@@ -1092,6 +1100,26 @@ async function applyChannelRestrictions(guild) {
       await channel.permissionOverwrites
         .edit(role, memberChannelOverwriteData())
         .catch(console.error);
+    }
+  }
+
+  for (const channelId of SECURITY_EXEMPT_CHANNELS) {
+    const channel = guild.channels.cache.get(channelId);
+
+    if (!channel || !channel.isTextBased()) continue;
+
+    await channel.permissionOverwrites
+      .edit(guild.roles.everyone, { SendMessages: null })
+      .catch(() => {});
+
+    for (const roleId of MEMBER_DENIED_ROLES) {
+      const role = guild.roles.cache.get(roleId);
+
+      if (!role) continue;
+
+      await channel.permissionOverwrites
+        .edit(role, { SendMessages: null })
+        .catch(() => {});
     }
   }
 }
