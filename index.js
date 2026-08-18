@@ -7,8 +7,6 @@ const path = require('path');
 const {
   Client,
   GatewayIntentBits,
-  REST,
-  Routes,
   SlashCommandBuilder,
   ContextMenuCommandBuilder,
   ApplicationCommandType,
@@ -4117,8 +4115,8 @@ client.once('clientReady', async () => {
   await checkBirthdays();
   setInterval(checkBirthdays, 3600000);
 
+  await registerCommandsSafe();
   if (!slashRegistered) {
-    console.log('🔄 Reintentando registro de slash commands cada 5 minutos...');
     setInterval(retryRegisterCommands, 300000);
   }
 });
@@ -4852,29 +4850,40 @@ http.createServer((req, res) => {
 
 let slashRegistered = false;
 
-async function registerCommands() {
-  const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
-
-  console.log('Registrando comandos...');
-
-  const timeout = new Promise((_, reject) =>
-    setTimeout(() => reject(new Error('Timeout de registro de comandos')), 30000)
-  );
-
-  await Promise.race([
-    rest.put(Routes.applicationCommands(process.env.CLIENT_ID), { body: commands }),
-    timeout
-  ]);
-
+async function registerCommandsViaFetch() {
+  const url = `https://discord.com/api/v10/applications/${process.env.CLIENT_ID}/commands`;
+  const res = await fetch(url, {
+    method: 'PUT',
+    headers: {
+      'Authorization': `Bot ${process.env.TOKEN}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(commands.map(c => c.toJSON()))
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`HTTP ${res.status}: ${text}`);
+  }
   slashRegistered = true;
   console.log('Comandos registrados correctamente.');
 }
 
-async function retryRegisterCommands() {
+async function registerCommandsSafe() {
   if (slashRegistered) return;
 
+  console.log('Registrando comandos...');
   try {
-    await registerCommands();
+    await registerCommandsViaFetch();
+  } catch (error) {
+    console.error('⚠️ Slash commands no registrados:', error.message);
+  }
+}
+
+async function retryRegisterCommands() {
+  if (slashRegistered) return;
+  try {
+    console.log('🔄 Reintentando registro de slash commands...');
+    await registerCommandsViaFetch();
   } catch (error) {
     console.error('⚠️ Retry de slash commands falló:', error.message);
   }
@@ -4895,13 +4904,6 @@ async function retryRegisterCommands() {
       warningsBucket.init(),
       pollBucket.init()
     ]);
-
-    try {
-      await registerCommands();
-    } catch (error) {
-      console.error('⚠️ No se pudieron registrar slash commands:', error.message);
-      console.error('El bot funcionará con comandos de prefijo (!!) mientras se reintenta.');
-    }
 
     await client.login(process.env.TOKEN);
   } catch (error) {
