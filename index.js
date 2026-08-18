@@ -4116,6 +4116,11 @@ client.once('clientReady', async () => {
 
   await checkBirthdays();
   setInterval(checkBirthdays, 3600000);
+
+  if (!slashRegistered) {
+    console.log('🔄 Reintentando registro de slash commands cada 5 minutos...');
+    setInterval(retryRegisterCommands, 300000);
+  }
 });
 
 client.on('guildMemberAdd', async member => {
@@ -4845,6 +4850,8 @@ http.createServer((req, res) => {
   console.log(`✅ Servidor de salud en el puerto ${process.env.PORT || 3000}`);
 });
 
+let slashRegistered = false;
+
 async function registerCommands() {
   const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
 
@@ -4859,7 +4866,18 @@ async function registerCommands() {
     timeout
   ]);
 
+  slashRegistered = true;
   console.log('Comandos registrados correctamente.');
+}
+
+async function retryRegisterCommands() {
+  if (slashRegistered) return;
+
+  try {
+    await registerCommands();
+  } catch (error) {
+    console.error('⚠️ Retry de slash commands falló:', error.message);
+  }
 }
 
 (async () => {
@@ -4882,7 +4900,7 @@ async function registerCommands() {
       await registerCommands();
     } catch (error) {
       console.error('⚠️ No se pudieron registrar slash commands:', error.message);
-      console.error('El bot funcionará con comandos de prefijo (!!) normalmente.');
+      console.error('El bot funcionará con comandos de prefijo (!!) mientras se reintenta.');
     }
 
     await client.login(process.env.TOKEN);
