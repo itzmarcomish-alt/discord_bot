@@ -4858,7 +4858,7 @@ async function registerCommandsViaFetch() {
       'Authorization': `Bot ${process.env.TOKEN}`,
       'Content-Type': 'application/json'
     },
-    body: JSON.stringify(commands.map(c => c.toJSON()))
+    body: JSON.stringify(commands)
   });
   if (!res.ok) {
     const text = await res.text();
