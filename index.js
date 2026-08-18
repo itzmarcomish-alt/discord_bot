@@ -4850,10 +4850,14 @@ async function registerCommands() {
 
   console.log('Registrando comandos...');
 
-  await rest.put(
-    Routes.applicationCommands(process.env.CLIENT_ID),
-    { body: commands }
+  const timeout = new Promise((_, reject) =>
+    setTimeout(() => reject(new Error('Timeout de registro de comandos')), 30000)
   );
+
+  await Promise.race([
+    rest.put(Routes.applicationCommands(process.env.CLIENT_ID), { body: commands }),
+    timeout
+  ]);
 
   console.log('Comandos registrados correctamente.');
 }
@@ -4874,7 +4878,13 @@ async function registerCommands() {
       pollBucket.init()
     ]);
 
-    await registerCommands();
+    try {
+      await registerCommands();
+    } catch (error) {
+      console.error('⚠️ No se pudieron registrar slash commands:', error.message);
+      console.error('El bot funcionará con comandos de prefijo (!!) normalmente.');
+    }
+
     await client.login(process.env.TOKEN);
   } catch (error) {
     console.error('❌ Error al iniciar el bot:');
