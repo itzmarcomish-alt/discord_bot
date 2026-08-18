@@ -4889,8 +4889,35 @@ async function retryRegisterCommands() {
   }
 }
 
+function withTimeout(promise, ms, label) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error(`Timeout ${label}: ${ms}ms`)), ms))
+  ]);
+}
+
 (async () => {
   try {
+    console.log('🔍 Probando conexión a Discord API...');
+    const controller = new AbortController();
+    const testTimeout = setTimeout(() => controller.abort(), 10000);
+    try {
+      const res = await fetch('https://discord.com/api/v10/gateway', {
+        signal: controller.signal
+      });
+      clearTimeout(testTimeout);
+      const data = await res.json();
+      console.log(`🔍 Discord API reachable: HTTP ${res.status}, gateway: ${data.url || 'N/A'}`);
+      if (!res.ok) console.error(`🔍 Respuesta inesperada: ${JSON.stringify(data)}`);
+    } catch (e) {
+      clearTimeout(testTimeout);
+      console.error(`🔍 DISCORD NO ES ALCANZABLE: ${e.message}`);
+      console.error('🔍 Esto es un problema de red de Render, no del bot.');
+    }
+
+    console.log(`🔍 TOKEN length: ${process.env.TOKEN ? process.env.TOKEN.length : 'UNDEFINED'}`);
+    console.log(`🔍 CLIENT_ID: ${process.env.CLIENT_ID || 'UNDEFINED'}`);
+
     await loadLevels();
 
     await Promise.all([
@@ -4905,7 +4932,8 @@ async function retryRegisterCommands() {
       pollBucket.init()
     ]);
 
-    await client.login(process.env.TOKEN);
+    console.log('🔐 Intentando login a Discord gateway...');
+    await withTimeout(client.login(process.env.TOKEN), 30000, 'client.login');
   } catch (error) {
     console.error('❌ Error al iniciar el bot:');
     console.error(error);
